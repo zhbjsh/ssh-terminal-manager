@@ -29,7 +29,7 @@ import wakeonlan
 from .errors import OfflineError, SSHAuthError, SSHConnectError, SSHHostKeyUnknownError
 
 _LOGGER = logging.getLogger(__name__)
-_TEST_COMMAND = Command("")
+_TEST_COMMAND = Command("echo ''")
 
 DEFAULT_PORT = 22
 DEFAULT_PING_TIMEOUT = 4
@@ -37,8 +37,8 @@ DEFAULT_SSH_TIMEOUT = 4
 DEFAULT_ADD_HOST_KEYS = False
 DEFAULT_ALLOW_TURN_OFF = False
 
-IS_ONLINE = "is_online"
-IS_CONNECTED = "is_connected"
+ONLINE = "online"
+CONNECTED = "connected"
 
 
 class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
@@ -53,8 +53,8 @@ class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
 class State:
     """The State class."""
 
-    is_online: bool = False
-    is_connected: bool = False
+    online: bool = False
+    connected: bool = False
 
     def __init__(self, manager: SSHManager) -> None:
         self._manager = manager
@@ -158,14 +158,13 @@ class SSHManager(Manager):
             return sensor.last_known_value
 
     def _execute_command_string(self, string: str, timeout: int) -> CommandOutput:
-        if not self.state.is_connected:
+        if not self.state.connected:
             raise CommandError("Not connected")
 
         try:
             stdin, stdout, stderr = self._client.exec_command(
                 string,
-                get_pty=True,  # required to be able to interrupt the command
-                timeout=float(timeout),  # channel timeout, used to be self.ssh_timeout
+                timeout=float(timeout),
             )
         except Exception as exc:
             self._disconnect()
@@ -174,28 +173,19 @@ class SSHManager(Manager):
         try:
             return CommandOutput(
                 time(),
-                [line.strip() for line in stdout.readlines()],
-                [line.strip() for line in stderr.readlines()],
+                ["".join(line.splitlines()) for line in stdout],
+                ["".join(line.splitlines()) for line in stderr],
                 stdout.channel.recv_exit_status(),
             )
-        except TimeoutError:
-            pass
+        except TimeoutError as exc:
+            stdin.channel.close()
+            raise CommandError(f"Timeout ({timeout} s)") from exc
         except Exception as exc:
             self._disconnect()
             raise CommandError("Disconnected during execution") from exc
 
-        try:
-            # Interrupt the command if it takes longer then timeout
-            # https://github.com/fabric/fabric/blob/2.0/fabric/runners.py#L47-L59
-            stdin.channel.send("\x03")
-        except Exception as exc:
-            self._disconnect()
-            raise CommandError(f"Disconnected after timeout ({exc})") from exc
-
-        raise CommandError("Command interrupted after timeout")
-
     def _connect(self) -> None:
-        if self.state.is_connected:
+        if self.state.connected:
             return
 
         try:
@@ -218,14 +208,14 @@ class SSHManager(Manager):
             self._disconnect()
             raise SSHConnectError("SSH connection failed") from exc
 
-        self.state.update(IS_CONNECTED, True)
+        self.state.update(CONNECTED, True)
 
     def _disconnect(self) -> None:
-        if not self.state.is_connected:
+        if not self.state.connected:
             return
 
         self._client.close()
-        self.state.update(IS_CONNECTED, False)
+        self.state.update(CONNECTED, False)
 
         for command in self.sensor_commands:
             command.update_sensors(self, None)
@@ -242,7 +232,7 @@ class SSHManager(Manager):
     async def async_connect(self) -> None:
         """Connect the SSH client.
 
-        Set `state.is_connected` to `True` and update all
+        Set `state.connected` to `True` and update all
         sensor commands if successful, otherwise disconnect
         and raise an error.
 
@@ -263,7 +253,7 @@ class SSHManager(Manager):
     async def async_disconnect(self) -> None:
         """Disconnect the SSH client.
 
-        Set `state.is_connected` to `False` and
+        Set `state.connected` to `False` and
         update all sensor commands with `None`.
         """
         loop = asyncio.get_running_loop()
@@ -278,7 +268,7 @@ class SSHManager(Manager):
             SSHAuthError
             SSHConnectError (`raise_errors`)
         """
-        if self.state.is_connected:
+        if self.state.connected:
             try:
                 await self.async_execute_command(_TEST_COMMAND)
                 return
@@ -294,11 +284,11 @@ class SSHManager(Manager):
             )
         except Exception as exc:  # pylint: disable=broad-except
             self.logger.debug("%s: Ping request failed (%s)", self.name, exc)
-            self.state.update(IS_ONLINE, False)
+            self.state.update(ONLINE, False)
         else:
-            self.state.update(IS_ONLINE, host.is_alive)
+            self.state.update(ONLINE, host.is_alive)
 
-        if not self.state.is_online:
+        if not self.state.online:
             if raise_errors:
                 raise OfflineError("Host is offline")
             return
@@ -311,7 +301,7 @@ class SSHManager(Manager):
 
     async def async_turn_on(self) -> None:
         """Turn the host on."""
-        if self.state.is_online:
+        if self.state.online:
             return
 
         wakeonlan.send_magic_packet(self.mac_address)
