@@ -7,6 +7,7 @@ from time import time
 
 import icmplib
 import paramiko
+import wakeonlan
 from terminal_manager import (
     DEFAULT_COMMAND_TIMEOUT,
     ActionCommand,
@@ -24,7 +25,6 @@ from terminal_manager import (
     default_collections,
 )
 from terminal_manager.default_collections import ActionKey, SensorKey
-import wakeonlan
 
 from .errors import OfflineError, SSHAuthError, SSHConnectError, SSHHostKeyUnknownError
 
@@ -42,8 +42,6 @@ CONNECTED = "connected"
 
 
 class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
-    """Custom reject policy for ssh client."""
-
     def missing_host_key(
         self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey
     ) -> None:
@@ -51,8 +49,6 @@ class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
 
 
 class State:
-    """The State class."""
-
     online: bool = False
     connected: bool = False
 
@@ -61,7 +57,6 @@ class State:
         self.on_change = Event()
 
     def update(self, name, value) -> None:
-        """Update."""
         if getattr(self, name) == value:
             return
 
@@ -71,25 +66,23 @@ class State:
 
 
 class SSHManager(Manager):
-    """The SSHManager class."""
-
     def __init__(
         self,
         host: str,
         *,
         name: str | None = None,
         mac_address: str | None = None,
-        add_host_keys: bool = DEFAULT_ADD_HOST_KEYS,
         port: int = DEFAULT_PORT,
         username: str | None = None,
         password: str | None = None,
         key_filename: str | None = None,
         host_keys_filename: str | None = None,
+        add_host_keys: bool = DEFAULT_ADD_HOST_KEYS,
+        allow_turn_off: bool = DEFAULT_ALLOW_TURN_OFF,
         ssh_timeout: int = DEFAULT_SSH_TIMEOUT,
         ping_timeout: int = DEFAULT_PING_TIMEOUT,
         command_timeout: int = DEFAULT_COMMAND_TIMEOUT,
         collection: Collection | None = None,
-        allow_turn_off: bool = DEFAULT_ALLOW_TURN_OFF,
         logger: logging.Logger = _LOGGER,
     ) -> None:
         super().__init__(
@@ -99,7 +92,6 @@ class SSHManager(Manager):
             logger=logger,
         )
         self.host = host
-        self._mac_address = mac_address
         self.port = port
         self.username = username
         self.password = password
@@ -107,62 +99,31 @@ class SSHManager(Manager):
         self.ssh_timeout = ssh_timeout
         self.ping_timeout = ping_timeout
         self.allow_turn_off = allow_turn_off
+        self._mac_address = mac_address
         self.state = State(self)
-        self._client = paramiko.SSHClient()
-        self._client.load_system_host_keys()
-        self._client.set_missing_host_key_policy(
+        self.client = paramiko.SSHClient()
+        self.client.load_system_host_keys()
+        self.client.set_missing_host_key_policy(
             paramiko.AutoAddPolicy if add_host_keys else CustomRejectPolicy
         )
 
         if host_keys_filename:
             with open(host_keys_filename, "a", encoding="utf-8"):
                 pass
-            self._client.load_host_keys(host_keys_filename)
-
-    @property
-    def hostname(self) -> str | None:
-        """Hostname."""
-        if sensor := self.sensors_by_key.get(SensorKey.HOSTNAME):
-            return sensor.last_known_value
+            self.client.load_host_keys(host_keys_filename)
 
     @property
     def mac_address(self) -> str | None:
-        """MAC address."""
         if self._mac_address:
             return self._mac_address
-        if sensor := self.sensors_by_key.get(SensorKey.MAC_ADDRESS):
-            return sensor.last_known_value
-
-    @property
-    def wol_support(self) -> bool | None:
-        """Wake on LAN support."""
-        if sensor := self.sensors_by_key.get(SensorKey.WOL_SUPPORT):
-            return sensor.last_known_value
-
-    @property
-    def os_name(self) -> str | None:
-        """OS name."""
-        if sensor := self.sensors_by_key.get(SensorKey.OS_NAME):
-            return sensor.last_known_value
-
-    @property
-    def os_version(self) -> str | None:
-        """OS version."""
-        if sensor := self.sensors_by_key.get(SensorKey.OS_VERSION):
-            return sensor.last_known_value
-
-    @property
-    def machine_type(self) -> str | None:
-        """Machine type."""
-        if sensor := self.sensors_by_key.get(SensorKey.MACHINE_TYPE):
-            return sensor.last_known_value
+        return super().mac_address
 
     def _execute_command_string(self, string: str, timeout: int) -> CommandOutput:
         if not self.state.connected:
             raise CommandError("Not connected")
 
         try:
-            stdin, stdout, stderr = self._client.exec_command(
+            stdin, stdout, stderr = self.client.exec_command(
                 string,
                 timeout=float(timeout),
             )
@@ -189,13 +150,13 @@ class SSHManager(Manager):
             return
 
         try:
-            self._client.connect(
+            self.client.connect(
                 self.host,
                 self.port,
                 self.username,
                 self.password,
                 key_filename=self.key_filename,
-                timeout=self.ssh_timeout,  # timeout for the TCP connect
+                timeout=self.ssh_timeout,  # TCP connect timeout
                 allow_agent=False,
             )
         except SSHHostKeyUnknownError:
@@ -214,7 +175,7 @@ class SSHManager(Manager):
         if not self.state.connected:
             return
 
-        self._client.close()
+        self.client.close()
         self.state.update(CONNECTED, False)
 
         for command in self.sensor_commands:
@@ -230,11 +191,10 @@ class SSHManager(Manager):
         )
 
     async def async_connect(self) -> None:
-        """Connect the SSH client.
+        """Connect to the SSH server.
 
-        Set `state.connected` to `True` and update all
-        sensor commands if successful, otherwise disconnect
-        and raise an error.
+        Set `state.connected` to `True` and update all sensor
+        commands if successful, otherwise raise an error.
 
         Raises:
             SSHHostKeyUnknownError
@@ -253,8 +213,8 @@ class SSHManager(Manager):
     async def async_disconnect(self) -> None:
         """Disconnect the SSH client.
 
-        Set `state.connected` to `False` and
-        update all sensor commands with `None`.
+        Set `state.connected` to `False` and update all sensor
+        commands with `None`.
         """
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._disconnect)
@@ -263,10 +223,10 @@ class SSHManager(Manager):
         """Update state.
 
         Raises:
-            OfflineError (`raise_errors`)
+            OfflineError (only with `raise_errors=True`)
             SSHHostKeyUnknownError
             SSHAuthError
-            SSHConnectError (`raise_errors`)
+            SSHConnectError (only with `raise_errors=True`)
         """
         if self.state.connected:
             try:
@@ -300,19 +260,36 @@ class SSHManager(Manager):
                 raise
 
     async def async_turn_on(self) -> None:
-        """Turn the host on."""
-        if self.state.online:
+        """Turn on by Wake on LAN."""
+        if self.state.online or self.mac_address is None:
             return
 
         wakeonlan.send_magic_packet(self.mac_address)
 
     async def async_turn_off(self) -> None:
-        """Turn the host off.
+        """Turn off by running the `TURN_OFF` action.
 
         Raises:
             CommandError
         """
-        if self.allow_turn_off is False:
+        if not (
+            self.state.connected
+            and self.allow_turn_off
+            and ActionKey.TURN_OFF in self.action_commands_by_key
+        ):
             return
 
         await self.async_run_action(ActionKey.TURN_OFF)
+
+    async def async_restart(self) -> None:
+        """Restart by running the `RESTART` action.
+
+        Raises:
+            CommandError
+        """
+        if not (
+            self.state.connected and ActionKey.RESTART in self.action_commands_by_key
+        ):
+            return
+
+        await self.async_run_action(ActionKey.RESTART)
