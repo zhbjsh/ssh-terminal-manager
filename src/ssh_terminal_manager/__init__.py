@@ -61,7 +61,7 @@ class State:
             return
 
         setattr(self, name, value)
-        self._manager.logger.debug("%s: %s is %s", self._manager.name, name, value)
+        self._manager.logger.info("%s: %s is %s", self._manager.name, name, value)
         self.on_change.notify(self)
 
 
@@ -240,7 +240,7 @@ class SSHManager(Manager):
                 privileged=False,
             )
         except Exception as exc:  # pylint: disable=broad-except
-            self.logger.debug("%s: Ping request failed (%s)", self.name, exc)
+            self.logger.info("%s: Ping request failed (%s)", self.name, exc)
             self.state.update(ONLINE, False)
         else:
             self.state.update(ONLINE, host.is_alive)
