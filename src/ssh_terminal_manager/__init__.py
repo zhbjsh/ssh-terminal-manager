@@ -9,6 +9,7 @@ import icmplib
 import paramiko
 import wakeonlan
 from terminal_manager import (
+    DEFAULT_ALLOW_TURN_OFF,
     DEFAULT_COMMAND_TIMEOUT,
     ActionCommand,
     BinarySensor,
@@ -31,14 +32,13 @@ from .errors import OfflineError, SSHAuthError, SSHConnectError, SSHHostKeyUnkno
 _LOGGER = logging.getLogger(__name__)
 _TEST_COMMAND = Command("echo ''")
 
+ONLINE = "online"
+CONNECTED = "connected"
+
 DEFAULT_PORT = 22
 DEFAULT_PING_TIMEOUT = 4
 DEFAULT_SSH_TIMEOUT = 4
 DEFAULT_ADD_HOST_KEYS = False
-DEFAULT_ALLOW_TURN_OFF = False
-
-ONLINE = "online"
-CONNECTED = "connected"
 
 
 class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
@@ -71,7 +71,6 @@ class SSHManager(Manager):
         host: str,
         *,
         name: str | None = None,
-        mac_address: str | None = None,
         port: int = DEFAULT_PORT,
         username: str | None = None,
         password: str | None = None,
@@ -88,6 +87,7 @@ class SSHManager(Manager):
         super().__init__(
             name=name or host,
             command_timeout=command_timeout,
+            allow_turn_off=allow_turn_off,
             collection=collection,
             logger=logger,
         )
@@ -98,8 +98,7 @@ class SSHManager(Manager):
         self.key_filename = key_filename
         self.ssh_timeout = ssh_timeout
         self.ping_timeout = ping_timeout
-        self.allow_turn_off = allow_turn_off
-        self._mac_address = mac_address
+        self._mac_address = None
         self.state = State(self)
         self.client = paramiko.SSHClient()
         self.client.load_system_host_keys()
@@ -114,9 +113,7 @@ class SSHManager(Manager):
 
     @property
     def mac_address(self) -> str | None:
-        if self._mac_address:
-            return self._mac_address
-        return super().mac_address
+        return self._mac_address or super().mac_address
 
     def _execute_command_string(self, string: str, timeout: int) -> CommandOutput:
         if not self.state.connected:
@@ -261,35 +258,11 @@ class SSHManager(Manager):
 
     async def async_turn_on(self) -> None:
         """Turn on by Wake on LAN."""
-        if self.state.online or self.mac_address is None:
+        if self.mac_address is None:
             return
 
         wakeonlan.send_magic_packet(self.mac_address)
 
-    async def async_turn_off(self) -> None:
-        """Turn off by running the `TURN_OFF` action.
-
-        Raises:
-            CommandError
-        """
-        if not (
-            self.state.connected
-            and self.allow_turn_off
-            and ActionKey.TURN_OFF in self.action_commands_by_key
-        ):
-            return
-
-        await self.async_run_action(ActionKey.TURN_OFF)
-
-    async def async_restart(self) -> None:
-        """Restart by running the `RESTART` action.
-
-        Raises:
-            CommandError
-        """
-        if not (
-            self.state.connected and ActionKey.RESTART in self.action_commands_by_key
-        ):
-            return
-
-        await self.async_run_action(ActionKey.RESTART)
+    def set_mac_address(self, mac_address: str | None) -> None:
+        """Set the MAC address."""
+        self._mac_address = mac_address
