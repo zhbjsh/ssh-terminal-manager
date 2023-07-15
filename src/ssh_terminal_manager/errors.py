@@ -6,7 +6,7 @@ class SSHHostKeyUnknownError(Exception):
     """Error to indicate that the SSH host key is unknown."""
 
 
-class SSHAuthError(Exception):
+class SSHAuthenticationError(Exception):
     """Error to indicate that the SSH authentication failed."""
 
 
