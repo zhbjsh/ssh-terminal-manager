@@ -66,8 +66,8 @@ class State:
             return
 
         setattr(self, name, value)
-        self._manager.logger.info(
-            "[%s] State: %s => %s", self._manager.name, name, value
+        self._manager.logger.debug(
+            "%s: state.%s => %s", self._manager.name, name, value
         )
         self.on_change.notify(self)
 
@@ -143,11 +143,18 @@ class SSHManager(Manager):
                 stdout.channel.recv_exit_status(),
             )
         except TimeoutError as exc:
-            stdin.channel.close()
-            raise CommandError(f"Timeout of {timeout} seconds reached") from exc
+            pass
         except Exception as exc:
             self._disconnect()
             raise CommandError(f"Disconnected during execution ({exc})") from exc
+
+        try:
+            stdin.channel.close()
+        except Exception as exc:
+            self._disconnect()
+            raise CommandError(f"Disconnected after timeout ({exc})") from exc
+
+        raise CommandError("Channel closed after timeout")
 
     def _connect(self) -> None:
         if self.state.connected:
@@ -241,7 +248,7 @@ class SSHManager(Manager):
                 privileged=False,
             )
         except Exception as exc:  # pylint: disable=broad-except
-            self.logger.info("[%s] Ping request failed (%s)", self.name, exc)
+            self.logger.debug("%s: Ping request failed (%s)", self.name, exc)
             self.state.update(ONLINE, False)
         else:
             self.state.update(ONLINE, host.is_alive)
