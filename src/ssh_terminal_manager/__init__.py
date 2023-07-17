@@ -265,11 +265,16 @@ class SSHManager(Manager):
                 raise
 
     async def async_turn_on(self) -> None:
-        """Turn on by Wake on LAN."""
+        """Turn on by Wake on LAN.
+
+        Raises:
+            ValueError
+        """
         if self.mac_address is None:
-            return
+            raise ValueError("No MAC Address set")
 
         wakeonlan.send_magic_packet(self.mac_address)
+        self.logger.debug("%s: Magic packet sent to %s", self.name, self.mac_address)
 
     def set_mac_address(self, mac_address: str | None) -> None:
         """Set the MAC address."""
