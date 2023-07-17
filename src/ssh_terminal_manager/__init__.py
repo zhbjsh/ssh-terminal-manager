@@ -137,6 +137,7 @@ class SSHManager(Manager):
 
         try:
             return CommandOutput(
+                string,
                 time(),
                 ["".join(line.splitlines()) for line in stdout],
                 ["".join(line.splitlines()) for line in stderr],
