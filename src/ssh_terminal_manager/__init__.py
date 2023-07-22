@@ -47,6 +47,9 @@ DEFAULT_SSH_TIMEOUT = 4
 DEFAULT_ADD_HOST_KEYS = False
 
 
+logging.getLogger("paramiko").setLevel(logging.CRITICAL)
+
+
 class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
     def missing_host_key(
         self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey
@@ -109,6 +112,7 @@ class SSHManager(Manager):
         self._mac_address = None
         self.state = State(self)
         self.client = paramiko.SSHClient()
+        self.client.set_log_channel("paramiko")
         self.client.load_system_host_keys()
         self.client.set_missing_host_key_policy(
             paramiko.AutoAddPolicy if add_host_keys else CustomRejectPolicy
