@@ -11,6 +11,7 @@ import wakeonlan
 from terminal_manager import (
     DEFAULT_ALLOW_TURN_OFF,
     DEFAULT_COMMAND_TIMEOUT,
+    PLACEHOLDER_KEY,
     ActionCommand,
     BinarySensor,
     Collection,
