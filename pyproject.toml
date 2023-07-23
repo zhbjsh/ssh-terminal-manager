@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ssh_terminal_manager"
-version = "0.8.6"
+version = "0.9.0"
 authors = [
   { name="zhbjsh", email="zhbjsh@outlook.com" },
 ]
@@ -18,8 +18,14 @@ classifiers = [
 ]
 keywords = [
   "ssh", 
-  "terminal", 
-  "command line",
+  "terminal",
+  "console",
+  "shell",
+  "bash",
+  "cmd",
+  "power shell",
+  "commands",
+  "command line"
 ]
 dependencies = [
   "icmplib >= 3.0",
