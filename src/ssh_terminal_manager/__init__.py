@@ -34,6 +34,7 @@ from .errors import (
     SSHConnectError,
     SSHHostKeyUnknownError,
 )
+from .ping_client import PingClient
 
 _LOGGER = logging.getLogger(__name__)
 _TEST_COMMAND = Command("echo ''")
@@ -111,6 +112,7 @@ class SSHManager(Manager):
         self.ping_timeout = ping_timeout
         self._mac_address = None
         self.state = State(self)
+        self.ping_client = PingClient()
         self.client = paramiko.SSHClient()
         self.client.set_log_channel("paramiko")
         self.client.load_system_host_keys()
@@ -247,17 +249,12 @@ class SSHManager(Manager):
                 pass
 
         try:
-            host = await icmplib.async_ping(
-                self.host,
-                count=1,
-                timeout=self.ping_timeout,
-                privileged=False,
-            )
+            online = await self.ping_client.async_ping(self.host, self.ping_timeout)
         except Exception as exc:  # pylint: disable=broad-except
-            self.logger.debug("%s: Ping request failed (%s)", self.name, exc)
+            self.logger.warning("%s: Ping request failed (%s)", self.name, exc)
             self.state.update(ONLINE, False)
         else:
-            self.state.update(ONLINE, host.is_alive)
+            self.state.update(ONLINE, online)
 
         if not self.state.online:
             if raise_errors:

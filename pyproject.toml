@@ -17,7 +17,7 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 keywords = [
-  "ssh", 
+  "ssh",
   "terminal",
   "console",
   "shell",
@@ -28,6 +28,7 @@ keywords = [
   "command line"
 ]
 dependencies = [
+  "async-timeout" >= 4.0.2",
   "icmplib >= 3.0",
   "paramiko >= 3.2.0",
   "terminal-manager >= 0.9.2",
