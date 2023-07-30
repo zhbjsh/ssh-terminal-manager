@@ -5,7 +5,6 @@ import asyncio
 import logging
 from time import time
 
-import icmplib
 import paramiko
 import wakeonlan
 from terminal_manager import (
@@ -191,9 +190,6 @@ class SSHManager(Manager):
         self.state.update(CONNECTED, True)
 
     def _disconnect(self) -> None:
-        if not self.state.connected:
-            return
-
         self.client.close()
         self.state.update(CONNECTED, False)
 
@@ -231,6 +227,11 @@ class SSHManager(Manager):
         """
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._disconnect)
+
+    async def async_close(self) -> None:
+        """Close the manager."""
+        await self.async_disconnect()
+        self.state.update(ONLINE, False)
 
     async def async_update_state(self, *, raise_errors: bool = False) -> None:
         """Update state.
