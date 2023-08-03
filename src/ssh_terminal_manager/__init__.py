@@ -196,6 +196,11 @@ class SSHManager(Manager):
         for command in self.sensor_commands:
             command.update_sensors(self, None)
 
+    async def async_close(self) -> None:
+        await super().async_close()
+        await self.async_disconnect()
+        self.state.update(ONLINE, False)
+
     async def async_execute_command_string(
         self, string: str, command_timeout: int | None = None
     ) -> CommandOutput:
@@ -227,11 +232,6 @@ class SSHManager(Manager):
         """
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._disconnect)
-
-    async def async_close(self) -> None:
-        """Close the manager."""
-        await self.async_disconnect()
-        self.state.update(ONLINE, False)
 
     async def async_update_state(self, *, raise_errors: bool = False) -> None:
         """Update state.
