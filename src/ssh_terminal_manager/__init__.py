@@ -125,6 +125,14 @@ class SSHManager(Manager):
             self.client.load_host_keys(host_keys_filename)
 
     @property
+    def is_up(self) -> bool:
+        return self.state.connected
+
+    @property
+    def is_down(self) -> bool:
+        return not self.state.online
+
+    @property
     def mac_address(self) -> str | None:
         return self._mac_address or super().mac_address
 
