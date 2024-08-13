@@ -1,4 +1,5 @@
 """SSH terminal manager."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +7,6 @@ import logging
 from time import time
 
 import paramiko
-import wakeonlan
 from terminal_manager import (
     DEFAULT_ALLOW_TURN_OFF,
     DEFAULT_COMMAND_TIMEOUT,
@@ -26,6 +26,7 @@ from terminal_manager import (
     default_collections,
 )
 from terminal_manager.default_collections import ActionKey, SensorKey
+import wakeonlan
 
 from .errors import (
     OfflineError,
@@ -86,7 +87,6 @@ class SSHManager(Manager):
         username: str | None = None,
         password: str | None = None,
         key_filename: str | None = None,
-        host_keys_filename: str | None = None,
         add_host_keys: bool = DEFAULT_ADD_HOST_KEYS,
         allow_turn_off: bool = DEFAULT_ALLOW_TURN_OFF,
         ssh_timeout: int = DEFAULT_SSH_TIMEOUT,
@@ -114,15 +114,9 @@ class SSHManager(Manager):
         self.ping_client = PingClient()
         self.client = paramiko.SSHClient()
         self.client.set_log_channel("paramiko")
-        self.client.load_system_host_keys()
         self.client.set_missing_host_key_policy(
             paramiko.AutoAddPolicy if add_host_keys else CustomRejectPolicy
         )
-
-        if host_keys_filename:
-            with open(host_keys_filename, "a", encoding="utf-8"):
-                pass
-            self.client.load_host_keys(host_keys_filename)
 
     @property
     def is_up(self) -> bool:
@@ -203,6 +197,13 @@ class SSHManager(Manager):
 
         for command in self.sensor_commands:
             command.update_sensors(self, None)
+
+    def _load_host_keys(self, host_keys_filename: str | None = None) -> None:
+        self.client.load_system_host_keys()
+        if host_keys_filename:
+            with open(host_keys_filename, "a", encoding="utf-8"):
+                pass
+            self.client.load_host_keys(host_keys_filename)
 
     async def async_close(self) -> None:
         await super().async_close()
@@ -287,6 +288,11 @@ class SSHManager(Manager):
 
         wakeonlan.send_magic_packet(self.mac_address)
         self.logger.debug("%s: Magic packet sent to %s", self.name, self.mac_address)
+
+    async def async_load_host_keys(self, host_keys_file: str | None = None) -> None:
+        """Load host keys from system and host keys file."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._load_host_keys, host_keys_file)
 
     def set_mac_address(self, mac_address: str | None) -> None:
         """Set the MAC address."""
