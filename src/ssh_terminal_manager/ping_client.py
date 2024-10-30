@@ -1,6 +1,6 @@
 import asyncio
+from contextlib import suppress
 
-import async_timeout
 import icmplib
 
 
@@ -36,14 +36,12 @@ class PingClient:
             close_fds=False,
         )
         try:
-            async with async_timeout.timeout(timeout + 1):
+            async with asyncio.timeout(timeout + 1):
                 await process.communicate()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if process:
-                try:
+                with suppress(TypeError):
                     await process.kill()
-                except TypeError:
-                    pass
             return False
 
         if process.returncode and process.returncode > 1:

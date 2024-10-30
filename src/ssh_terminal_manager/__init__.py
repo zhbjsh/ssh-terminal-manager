@@ -41,11 +41,13 @@ _TEST_COMMAND = Command("echo ''")
 
 ONLINE = "online"
 CONNECTED = "connected"
+ERROR = "error"
 
 DEFAULT_PORT = 22
 DEFAULT_PING_TIMEOUT = 4
 DEFAULT_SSH_TIMEOUT = 4
 DEFAULT_ADD_HOST_KEYS = False
+DEFAULT_DISCONNECT_MODE = False
 
 
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
@@ -61,6 +63,7 @@ class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
 class State:
     online: bool = False
     connected: bool = False
+    error: bool = False
 
     def __init__(self, manager: SSHManager) -> None:
         self._manager = manager
@@ -92,6 +95,7 @@ class SSHManager(Manager):
         ssh_timeout: int = DEFAULT_SSH_TIMEOUT,
         ping_timeout: int = DEFAULT_PING_TIMEOUT,
         command_timeout: int = DEFAULT_COMMAND_TIMEOUT,
+        disconnect_mode: bool = DEFAULT_DISCONNECT_MODE,
         collection: Collection | None = None,
         logger: logging.Logger = _LOGGER,
     ) -> None:
@@ -109,6 +113,7 @@ class SSHManager(Manager):
         self.key_filename = key_filename
         self.ssh_timeout = ssh_timeout
         self.ping_timeout = ping_timeout
+        self.disconnect_mode = disconnect_mode
         self._mac_address = None
         self.state = State(self)
         self.ping_client = PingClient()
@@ -120,6 +125,8 @@ class SSHManager(Manager):
 
     @property
     def is_up(self) -> bool:
+        if self.disconnect_mode:
+            return self.state.online
         return self.state.connected
 
     @property
@@ -131,6 +138,12 @@ class SSHManager(Manager):
         return self._mac_address or super().mac_address
 
     def _execute_command_string(self, string: str, timeout: int) -> CommandOutput:
+        if self.disconnect_mode and self.state.online and not self.state.connected:
+            try:
+                self._connect()
+            except Exception as exc:
+                raise CommandError(f"Failed to connect ({exc})") from exc
+
         if not self.state.connected:
             raise CommandError("Not connected")
 
@@ -144,18 +157,22 @@ class SSHManager(Manager):
             raise CommandError(f"Disconnected before execution ({exc})") from exc
 
         try:
-            return CommandOutput(
+            output = CommandOutput(
                 string,
                 time(),
                 ["".join(line.splitlines()) for line in stdout],
                 ["".join(line.splitlines()) for line in stderr],
                 stdout.channel.recv_exit_status(),
             )
-        except TimeoutError as exc:
+        except TimeoutError:
             pass
         except Exception as exc:
             self._disconnect()
             raise CommandError(f"Disconnected during execution ({exc})") from exc
+        else:
+            if self.disconnect_mode:
+                self._disconnect(False)
+            return output
 
         try:
             stdin.channel.close()
@@ -181,19 +198,25 @@ class SSHManager(Manager):
             )
         except SSHHostKeyUnknownError:
             self._disconnect()
+            self.state.update(ERROR, True)
             raise
         except paramiko.AuthenticationException as exc:
             self._disconnect()
+            self.state.update(ERROR, True)
             raise SSHAuthenticationError(f"SSH authentication failed ({exc})") from exc
         except Exception as exc:
             self._disconnect()
             raise SSHConnectError(f"SSH connection failed ({exc})") from exc
 
         self.state.update(CONNECTED, True)
+        self.state.update(ERROR, False)
 
-    def _disconnect(self) -> None:
+    def _disconnect(self, clear_sensor_commands: bool = True) -> None:
         self.client.close()
         self.state.update(CONNECTED, False)
+
+        if not clear_sensor_commands:
+            return
 
         for command in self.sensor_commands:
             command.update_sensors(self, None)
@@ -213,6 +236,12 @@ class SSHManager(Manager):
     async def async_execute_command_string(
         self, string: str, command_timeout: int | None = None
     ) -> CommandOutput:
+        """Execute a command string.
+
+        Raises:
+            CommandError
+
+        """
         loop = asyncio.get_running_loop()
         timeout = command_timeout or self.command_timeout
         return await loop.run_in_executor(
@@ -224,12 +253,16 @@ class SSHManager(Manager):
 
         Set `state.connected` to `True` and update all sensor
         commands if successful, otherwise raise an error.
+        Doesnt do anything in `disconnect_mode`.
 
         Raises:
             SSHHostKeyUnknownError
             SSHAuthenticationError
             SSHConnectError
+
         """
+        if self.disconnect_mode:
+            return
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._connect)
         await self.async_update_sensor_commands(force=True)
@@ -250,17 +283,19 @@ class SSHManager(Manager):
             SSHHostKeyUnknownError
             SSHAuthenticationError
             SSHConnectError (only with `raise_errors=True`)
+
         """
         if self.state.connected:
             try:
                 await self.async_execute_command(_TEST_COMMAND)
-                return
             except CommandError:
                 pass
+            else:
+                return
 
         try:
             online = await self.ping_client.async_ping(self.host, self.ping_timeout)
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:  # noqa: BLE001
             self.logger.warning("%s: Ping request failed (%s)", self.name, exc)
             self.state.update(ONLINE, False)
         else:
@@ -268,7 +303,7 @@ class SSHManager(Manager):
 
         if not self.state.online:
             if raise_errors:
-                raise OfflineError(f"Host is offline")
+                raise OfflineError("Host is offline")
             return
 
         try:
@@ -282,6 +317,7 @@ class SSHManager(Manager):
 
         Raises:
             ValueError
+
         """
         if self.mac_address is None:
             raise ValueError("No MAC Address set")
