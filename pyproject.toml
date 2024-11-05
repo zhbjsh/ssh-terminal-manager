@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ssh_terminal_manager"
-version = "1.0.6"
+version = "1.0.7"
 authors = [
   { name="zhbjsh", email="zhbjsh@outlook.com" },
 ]
@@ -31,7 +31,7 @@ dependencies = [
   "async-timeout >= 4.0.2",
   "icmplib >= 3.0",
   "paramiko >= 3.4.1",
-  "terminal-manager >= 1.0.3",
+  "terminal-manager >= 1.0.4",
   "wakeonlan >= 3.0.0"
 ]
 

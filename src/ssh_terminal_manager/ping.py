@@ -4,8 +4,11 @@ from contextlib import suppress
 import icmplib
 
 
-class PingClient:
+class Ping:
     use_icmplib: bool | None = None
+
+    def __init__(self, timeout: int) -> None:
+        self._timeout = timeout
 
     async def _async_test_icmplib(self) -> bool:
         try:
@@ -14,21 +17,21 @@ class PingClient:
             return False
         return True
 
-    async def _async_ping_icmplib(self, host: str, timeout: int) -> bool:
+    async def _async_ping_icmplib(self, host: str) -> bool:
         result = await icmplib.async_ping(
             host,
             count=1,
-            timeout=timeout,
+            timeout=self._timeout,
             privileged=False,
         )
         return result.is_alive
 
-    async def _async_ping_process(self, host: str, timeout: int) -> bool:
+    async def _async_ping_process(self, host: str) -> bool:
         process = await asyncio.create_subprocess_exec(
             "ping",
             "-q",
             "-c1",
-            f"-W{timeout}",
+            f"-W{self._timeout}",
             host,
             stdin=None,
             stdout=asyncio.subprocess.PIPE,
@@ -36,7 +39,7 @@ class PingClient:
             close_fds=False,
         )
         try:
-            async with asyncio.timeout(timeout + 1):
+            async with asyncio.timeout(self._timeout + 1):
                 await process.communicate()
         except TimeoutError:
             if process:
@@ -49,11 +52,11 @@ class PingClient:
 
         return process.returncode == 0
 
-    async def async_ping(self, host: str, timeout: int):
+    async def async_ping(self, host: str):
         if self.use_icmplib is None:
             self.use_icmplib = await self._async_test_icmplib()
 
         if self.use_icmplib:
-            return await self._async_ping_icmplib(host, timeout)
+            return await self._async_ping_icmplib(host)
 
-        return await self._async_ping_process(host, timeout)
+        return await self._async_ping_process(host)
