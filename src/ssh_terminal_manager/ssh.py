@@ -175,9 +175,9 @@ class SSH:
         stderr_file = channel.makefile_stderr("r")
 
         try:
-            stdin_file.write(string + "\n")
-            stdin_file.write(ECHO_STRING + "\n")
-            stdin_file.write(EXIT_STRING + "\n")
+            stdin_file.write(string + "\r\n")
+            stdin_file.write(ECHO_STRING + "\r\n")
+            stdin_file.write(EXIT_STRING + "\r\n")
         except Exception as exc:
             raise CommandError(f"Failed to send command ({exc})") from exc
 
