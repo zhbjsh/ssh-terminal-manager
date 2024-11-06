@@ -4,14 +4,14 @@ import re
 import time
 
 import paramiko
-from terminal_manager import CommandError, CommandOutput
+from terminal_manager import CommandError, CommandOutput, Event
 
 from .errors import SSHAuthenticationError, SSHConnectError, SSHHostKeyUnknownError
 from .state import CONNECTED, ERROR, State
 
 ANSI_ESCAPE = re.compile(r"(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]")
-END = "__exit_code__:"
-ECHO_STRING = f"echo {END} $?"
+END = "__exit_code__"
+ECHO_STRING = f'echo "{END}|$?|%errorlevel%|$LastExitCode|"'
 EXIT_STRING = "exit"
 
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
@@ -41,10 +41,9 @@ class SSH:
         host_keys_filename: str,
         add_host_keys: bool,
         load_system_host_keys: bool,
-        timeout: int,
-        disconnect_mode: bool,
         invoke_shell: bool,
-        on_disconnect: Callable,
+        disconnect_mode: bool,
+        timeout: int,
     ):
         self._state = state
         self._host = host
@@ -57,12 +56,12 @@ class SSH:
         self._timeout = timeout
         self._disconnect_mode = disconnect_mode
         self._invoke_shell = invoke_shell
-        self._on_disconnect = on_disconnect
         self._client = paramiko.SSHClient()
         self._client.set_log_channel("paramiko")
         self._client.set_missing_host_key_policy(
             paramiko.AutoAddPolicy if add_host_keys else CustomRejectPolicy
         )
+        self.on_disconnect = Event()
 
     @property
     def host(self) -> str:
@@ -106,7 +105,7 @@ class SSH:
         self._state.update(CONNECTED, False)
 
         if notify:
-            self._on_disconnect()
+            self.on_disconnect.notify()
 
     def load_host_keys(self) -> None:
         if self._load_system_host_keys:
@@ -199,8 +198,14 @@ class SSH:
         for line in stdout_string.splitlines():
             if line in [string, ECHO_STRING, EXIT_STRING]:
                 stdout = []
-            elif str(line).startswith(END):
-                code = int(line.rsplit(maxsplit=1)[1])
+            elif line.startswith((END, f'"{END}')):
+                for item in line.split("|"):
+                    if item.isnumeric():
+                        code = int(item)
+                    elif item == "True":
+                        code = 0
+                    elif item == "False":
+                        code = 1
                 break
             else:
                 stdout.append(line)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 
 from terminal_manager import (
@@ -48,6 +49,12 @@ DEFAULT_DISCONNECT_MODE = False
 DEFAULT_INVOKE_SHELL = False
 
 
+async def _run_in_executor(func, *args):
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(thread_name_prefix="SSH") as executor:
+        return await loop.run_in_executor(executor, func, *args)
+
+
 class SSHManager(Manager):
     def __init__(
         self,
@@ -61,12 +68,12 @@ class SSHManager(Manager):
         host_keys_filename: str | None = None,
         add_host_keys: bool = DEFAULT_ADD_HOST_KEYS,
         load_system_host_keys: bool = DEFAULT_LOAD_SYSTEM_HOST_KEYS,
+        invoke_shell: bool = DEFAULT_INVOKE_SHELL,
         allow_turn_off: bool = DEFAULT_ALLOW_TURN_OFF,
+        disconnect_mode: bool = DEFAULT_DISCONNECT_MODE,
         ssh_timeout: int = DEFAULT_SSH_TIMEOUT,
         ping_timeout: int = DEFAULT_PING_TIMEOUT,
         command_timeout: int = DEFAULT_COMMAND_TIMEOUT,
-        disconnect_mode: bool = DEFAULT_DISCONNECT_MODE,
-        invoke_shell: bool = DEFAULT_INVOKE_SHELL,
         collection: Collection | None = None,
         logger: logging.Logger = _LOGGER,
     ) -> None:
@@ -94,11 +101,11 @@ class SSHManager(Manager):
             host_keys_filename,
             add_host_keys,
             load_system_host_keys,
-            ssh_timeout,
-            disconnect_mode,
             invoke_shell,
-            on_disconnect=self._clear_sensors,
+            disconnect_mode,
+            ssh_timeout,
         )
+        self._ssh.on_disconnect.subscribe(self._clear_sensors)
         self._mac_address = None
 
     @property
@@ -142,8 +149,7 @@ class SSHManager(Manager):
         """
         if self.disconnect_mode:
             return
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._ssh.connect)
+        await _run_in_executor(self._ssh.connect)
         await self.async_update_sensor_commands(force=True)
 
     async def async_disconnect(self) -> None:
@@ -151,8 +157,7 @@ class SSHManager(Manager):
 
         Set `state.connected` to `False`.
         """
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._ssh.disconnect)
+        await _run_in_executor(self._ssh.disconnect)
 
     async def async_close(self) -> None:
         """Close."""
@@ -171,11 +176,8 @@ class SSHManager(Manager):
             CommandError
 
         """
-        loop = asyncio.get_running_loop()
         timeout = command_timeout or self.command_timeout
-        return await loop.run_in_executor(
-            None, self._ssh.execute_command_string, string, timeout
-        )
+        return await _run_in_executor(self._ssh.execute_command_string, string, timeout)
 
     async def async_update_state(
         self,
@@ -233,5 +235,4 @@ class SSHManager(Manager):
 
     async def async_load_host_keys(self) -> None:
         """Load host keys."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._ssh.load_host_keys)
+        return await _run_in_executor(self._ssh.load_host_keys)
