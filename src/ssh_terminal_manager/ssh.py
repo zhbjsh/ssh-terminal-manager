@@ -11,7 +11,9 @@ from .state import CONNECTED, ERROR, State
 
 ANSI_ESCAPE = re.compile(r"(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]")
 END = "__exit_code__"
-ECHO_STRING = f'echo "{END}|$?|%errorlevel%|$LastExitCode|"'
+ECHO_STRING = (
+    f'echo "{END}|$LastExitCode|$?|%errorlevel%|${{PIPESTATUS[@]}}|${{pipestatus[@]}}"'
+)
 EXIT_STRING = "exit"
 
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
@@ -20,6 +22,29 @@ logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 def _format(string: str) -> str:
     string = ANSI_ESCAPE.sub("", string)
     return string.replace("\b", "").replace("\r", "")
+
+
+def _get_exit_code(line: str) -> int:
+    fields = line.split("|")
+
+    if len(fields) != 6:
+        return 0
+
+    pipe_bash, pipe_zsh = fields[4:]
+
+    for item in pipe_bash.split() + pipe_zsh.split():
+        if item != "0":
+            return int(item)
+
+    for item in fields[:4]:
+        if item.isnumeric():
+            return int(item)
+        if item == "True":
+            return 0
+        if item == "False":
+            return 1
+
+    return 0
 
 
 class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
@@ -128,7 +153,8 @@ class SSH:
         try:
             if self._invoke_shell:
                 output = self._execute_invoke_shell(string, timeout)
-            output = self._execute(string, timeout)
+            else:
+                output = self._execute(string, timeout)
         except TimeoutError as exc:
             raise CommandError(f"Timeout during command ({exc})") from exc
         except CommandError:
@@ -165,7 +191,9 @@ class SSH:
 
     def _execute_invoke_shell(self, string: str, timeout: int) -> CommandOutput:
         try:
-            channel = self._client.invoke_shell(width=len(string) + 20)
+            channel = self._client.invoke_shell(
+                width=max(len(ECHO_STRING), len(string)) + 20
+            )
         except Exception as exc:
             raise CommandError(f"Failed to open channel ({exc})") from exc
 
@@ -175,9 +203,9 @@ class SSH:
         stderr_file = channel.makefile_stderr("r")
 
         try:
-            stdin_file.write(string + "\r\n")
-            stdin_file.write(ECHO_STRING + "\r\n")
-            stdin_file.write(EXIT_STRING + "\r\n")
+            stdin_file.write(string + "\r")
+            stdin_file.write(ECHO_STRING + "\r")
+            stdin_file.write(EXIT_STRING + "\r")
         except Exception as exc:
             raise CommandError(f"Failed to send command ({exc})") from exc
 
@@ -199,13 +227,7 @@ class SSH:
             if line in [string, ECHO_STRING, EXIT_STRING]:
                 stdout = []
             elif line.startswith((END, f'"{END}')):
-                for item in line.split("|"):
-                    if item.isnumeric():
-                        code = int(item)
-                    elif item == "True":
-                        code = 0
-                    elif item == "False":
-                        code = 1
+                code = _get_exit_code(line)
                 break
             else:
                 stdout.append(line)
