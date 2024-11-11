@@ -1,4 +1,3 @@
-from collections.abc import Callable
 import logging
 import re
 import time
