@@ -152,19 +152,16 @@ class SSH:
 
         try:
             if self._invoke_shell:
-                output = self._execute_invoke_shell(string, timeout)
-            else:
-                output = self._execute(string, timeout)
+                return self._execute_invoke_shell(string, timeout)
+            return self._execute(string, timeout)
         except TimeoutError as exc:
             raise CommandError(f"Timeout during command ({exc})") from exc
         except CommandError:
             self.disconnect()
             raise
-
-        if self._disconnect_mode:
-            self.disconnect(False)
-
-        return output
+        finally:
+            if self._disconnect_mode and self._state.connected:
+                self.disconnect(False)
 
     def _execute(self, string: str, timeout: int) -> CommandOutput:
         try:
