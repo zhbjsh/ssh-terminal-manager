@@ -8,17 +8,26 @@ from terminal_manager import CommandError, CommandOutput, Event
 from .errors import SSHAuthenticationError, SSHConnectError, SSHHostKeyUnknownError
 from .state import CONNECTED, ERROR, State
 
-ANSI_ESCAPE = re.compile(r"(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]")
+WIN_TITLE = re.compile(r"\x1B\]0\;.*?\x07")
+WIN_NEWLINE = re.compile(r"\x1B\[\d+\;1H")
+ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
 END = "__exit_code__"
-ECHO_STRING = (
-    f'echo "{END}|$LastExitCode|$?|%errorlevel%|${{PIPESTATUS[@]}}|${{pipestatus[@]}}"'
-)
+PS_CODE = "$LastExitCode"
+LINUX_CODE = "$?"
+CMD_CODE = r"%errorlevel%"
+BASH_PIPE = r"${PIPESTATUS[@]}"
+ZSH_PIPE = r"${pipestatus[@]}"
+
+ECHO_STRING = f'echo "{END}|{PS_CODE}|{LINUX_CODE}|{CMD_CODE}|{BASH_PIPE}|{ZSH_PIPE}"'
 EXIT_STRING = "exit"
 
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
 
 def _format(string: str) -> str:
+    string = WIN_TITLE.sub("", string)
+    string = WIN_NEWLINE.sub("\n", string)
     string = ANSI_ESCAPE.sub("", string)
     return string.replace("\b", "").replace("\r", "")
 
@@ -32,7 +41,7 @@ def _get_exit_code(line: str) -> int:
     pipe_bash, pipe_zsh = fields[4:]
 
     for item in pipe_bash.split() + pipe_zsh.split():
-        if item != "0":
+        if item.isnumeric() and item != "0":
             return int(item)
 
     for item in fields[:4]:
@@ -44,6 +53,13 @@ def _get_exit_code(line: str) -> int:
             return 1
 
     return 0
+
+
+def _get_index(lines: list[str], string: str) -> int | None:
+    for i, line in enumerate(lines):
+        if string in line:
+            return i
+    return None
 
 
 class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
@@ -187,9 +203,7 @@ class SSH:
 
     def _execute_invoke_shell(self, string: str, timeout: int) -> CommandOutput:
         try:
-            channel = self._client.invoke_shell(
-                width=max(len(ECHO_STRING), len(string)) + 20
-            )
+            channel = self._client.invoke_shell(width=800)
         except Exception as exc:
             raise CommandError(f"Failed to open channel ({exc})") from exc
 
@@ -198,8 +212,14 @@ class SSH:
         stdout_file = channel.makefile("r")
         stderr_file = channel.makefile_stderr("r")
 
+        # needed for windows cmd:
+        while not channel.recv_ready():
+            time.sleep(0.2)
+
         try:
             stdin_file.write(string + "\r")
+            # needed for windows cmd:
+            time.sleep(1)
             stdin_file.write(ECHO_STRING + "\r")
             stdin_file.write(EXIT_STRING + "\r")
         except Exception as exc:
@@ -228,10 +248,15 @@ class SSH:
             else:
                 stdout.append(line)
 
-        if stdout and ECHO_STRING in stdout[-1]:
-            stdout.pop()
         if stdout and string in stdout[0]:
             stdout.pop(0)
+        elif (i := _get_index(stdout, string)) is not None:
+            stdout = stdout[i + 1 :]
+
+        if stdout and ECHO_STRING in stdout[-1]:
+            stdout.pop()
+        elif (i := _get_index(stdout, ECHO_STRING)) is not None:
+            stdout = stdout[: i - 1]
 
         return CommandOutput(
             string,
