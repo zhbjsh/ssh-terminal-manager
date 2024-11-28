@@ -8,9 +8,9 @@ from terminal_manager import CommandError, CommandOutput, Event
 from .errors import SSHAuthenticationError, SSHConnectError, SSHHostKeyUnknownError
 from .state import CONNECTED, ERROR, State
 
-WIN_TITLE = re.compile(r"\x1B\]0\;.*?\x07")
-WIN_NEWLINE = re.compile(r"\x1B\[\d+\;1H")
-ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+WIN_TITLE = re.compile(r"\x1b\]0\;.*?\x07")
+WIN_NEWLINE = re.compile(r"\x1b\[\d+\;1H")
+ANSI_ESCAPE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 END = "__exit_code__"
 PS_CODE = "$LastExitCode"
@@ -22,44 +22,10 @@ ZSH_PIPE = r"${pipestatus[@]}"
 ECHO_STRING = f'echo "{END}|{PS_CODE}|{LINUX_CODE}|{CMD_CODE}|{BASH_PIPE}|{ZSH_PIPE}"'
 EXIT_STRING = "exit"
 
+CMD_START = "\x1b[?25l\x1b[2J\x1b[m\x1b[H"
+CMD_TEST = "Microsoft Windows"
+
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
-
-
-def _format(string: str) -> str:
-    string = WIN_TITLE.sub("", string)
-    string = WIN_NEWLINE.sub("\n", string)
-    string = ANSI_ESCAPE.sub("", string)
-    return string.replace("\b", "").replace("\r", "")
-
-
-def _get_exit_code(line: str) -> int:
-    fields = line.split("|")
-
-    if len(fields) != 6:
-        return 0
-
-    pipe_bash, pipe_zsh = fields[4:]
-
-    for item in pipe_bash.split() + pipe_zsh.split():
-        if item.isnumeric() and item != "0":
-            return int(item)
-
-    for item in fields[:4]:
-        if item.isnumeric():
-            return int(item)
-        if item == "True":
-            return 0
-        if item == "False":
-            return 1
-
-    return 0
-
-
-def _get_index(lines: list[str], string: str) -> int | None:
-    for i, line in enumerate(lines):
-        if string in line:
-            return i
-    return None
 
 
 class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
@@ -67,6 +33,62 @@ class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
         self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey
     ) -> None:
         raise SSHHostKeyUnknownError(f"SSH host key of {hostname} is unknown")
+
+
+class ShellParser:
+    def __init__(self, stdin: list[str]) -> None:
+        self._stdin = stdin
+
+    def _get_code(self, line: str) -> tuple[int, int]:
+        if len(fields := line.split("|")) != 6:
+            return 0
+
+        for item in fields[:4]:
+            if item.isnumeric() and (code := int(item)) != 0:
+                return code
+            if item == "False":
+                return 1
+
+        if len(self._stdin) > 1:
+            return 0
+
+        for item in fields[4].split() + fields[5].split():
+            if item.isnumeric() and (code := int(item)) != 0:
+                return int(item)
+
+        return 0
+
+    def _get_lines(self, stdout_bytes: bytes) -> list[str]:
+        string = stdout_bytes.decode()
+        string = WIN_TITLE.sub("", string)
+        string = WIN_NEWLINE.sub("\n", string)
+        string = ANSI_ESCAPE.sub("", string)
+        string = string.replace("\b", "").replace("\r", "").replace("\0", "")
+        return string.splitlines()
+
+    def parse(self, stdout_bytes: bytes) -> tuple[list[str], int]:
+        """Get stdout and code."""
+        stdout = []
+        code = stdin_count = start = end = 0
+
+        for i, line in enumerate(lines := self._get_lines(stdout_bytes)):
+            if stdin_count > len(self._stdin) - 1:
+                break
+            if line.endswith(self._stdin[stdin_count]) or line in [
+                *self._stdin,
+                ECHO_STRING,
+                EXIT_STRING,
+            ]:
+                start = end = i + 1
+            elif line.endswith(ECHO_STRING):
+                end = i
+            elif line.startswith((END, f'"{END}')):
+                stdout.extend(lines[start:end])
+                code = code or self._get_code(line)
+                start = end = i + 1
+                stdin_count += 1
+
+        return stdout, code
 
 
 class SSH:
@@ -170,7 +192,7 @@ class SSH:
                 return self._execute_invoke_shell(string, timeout)
             return self._execute(string, timeout)
         except TimeoutError as exc:
-            raise CommandError(f"Timeout during command ({exc})") from exc
+            raise CommandError("Timeout during command") from exc
         except CommandError:
             self.disconnect()
             raise
@@ -203,31 +225,31 @@ class SSH:
 
     def _execute_invoke_shell(self, string: str, timeout: int) -> CommandOutput:
         try:
-            channel = self._client.invoke_shell(width=800)
+            channel = self._client.invoke_shell(width=4095)
         except Exception as exc:
             raise CommandError(f"Failed to open channel ({exc})") from exc
 
         channel.settimeout(float(timeout))
         stdin_file = channel.makefile_stdin("wb")
         stdout_file = channel.makefile("r")
-        stderr_file = channel.makefile_stderr("r")
-
-        # needed for windows cmd:
-        while not channel.recv_ready():
-            time.sleep(0.2)
 
         try:
-            stdin_file.write(string + "\r")
-            # needed for windows cmd:
-            time.sleep(1)
-            stdin_file.write(ECHO_STRING + "\r")
+            cmd = self._detect_cmd(stdout_file)
+        except Exception as exc:
+            raise CommandError(f"Failed to detect shell ({exc})") from exc
+
+        try:
+            for line in (stdin := string.splitlines()):
+                stdin_file.write(line + "\r")
+                if cmd:
+                    time.sleep(1.5)
+                stdin_file.write(ECHO_STRING + "\r")
             stdin_file.write(EXIT_STRING + "\r")
         except Exception as exc:
             raise CommandError(f"Failed to send command ({exc})") from exc
 
         try:
-            stdout_string = _format(stdout_file.read().decode())
-            stderr_string = _format(stderr_file.read().decode())
+            stdout_bytes = stdout_file.read()
         except TimeoutError:
             raise
         except Exception as exc:
@@ -235,33 +257,31 @@ class SSH:
         finally:
             channel.close()
 
-        stdout = []
-        stderr = stderr_string.splitlines()
-        code = 0
-
-        for line in stdout_string.splitlines():
-            if line in [string, ECHO_STRING, EXIT_STRING]:
-                stdout = []
-            elif line.startswith((END, f'"{END}')):
-                code = _get_exit_code(line)
-                break
-            else:
-                stdout.append(line)
-
-        if stdout and string in stdout[0]:
-            stdout.pop(0)
-        elif (i := _get_index(stdout, string)) is not None:
-            stdout = stdout[i + 1 :]
-
-        if stdout and ECHO_STRING in stdout[-1]:
-            stdout.pop()
-        elif (i := _get_index(stdout, ECHO_STRING)) is not None:
-            stdout = stdout[: i - 1]
+        try:
+            stdout, code = ShellParser(stdin).parse(stdout_bytes)
+        except Exception as exc:
+            raise CommandError(f"Failed to parse command output ({exc})") from exc
 
         return CommandOutput(
             string,
             time.time(),
             stdout,
-            stderr,
+            [],
             code,
         )
+
+    def _detect_cmd(self, stdout_file: paramiko.ChannelFile) -> bool:
+        if stdout_file.read(16).decode() != CMD_START:
+            return False
+
+        test_line = ""
+        char = stdout_file.read(1).decode()
+
+        while char in ["\r", "\n"]:
+            char = stdout_file.read(1).decode()
+
+        while char not in ["\r", "\n"]:
+            test_line += char
+            char = stdout_file.read(1).decode()
+
+        return CMD_TEST in test_line
