@@ -15,15 +15,17 @@ from terminal_manager import (
     Collection,
     Command,
     CommandError,
+    CommandLoopError,
     CommandOutput,
     Event,
-    InvalidRequiredSensorError,
+    InvalidSensorError,
     Manager,
     NameKeyError,
     NumberSensor,
     Sensor,
     SensorCommand,
     TextSensor,
+    VersionSensor,
     default_collections,
 )
 from terminal_manager.default_collections import ActionKey, SensorKey
