@@ -1,8 +1,10 @@
 import logging
 import re
 import time
+import hashlib
 
 import paramiko
+import paramiko.ssh_exception
 from terminal_manager import CommandError, CommandOutput, Event
 
 from .errors import SSHAuthenticationError, SSHConnectError, SSHHostKeyUnknownError
@@ -32,7 +34,7 @@ class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
     def missing_host_key(
         self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey
     ) -> None:
-        raise SSHHostKeyUnknownError(f"SSH host key of {hostname} is unknown")
+        raise SSHHostKeyUnknownError(hostname)
 
 
 class ShellParser:
@@ -154,10 +156,10 @@ class SSH:
         except paramiko.AuthenticationException as exc:
             self.disconnect()
             self._state.update(ERROR, True)
-            raise SSHAuthenticationError(f"SSH authentication failed ({exc})") from exc
+            raise SSHAuthenticationError(exc) from exc
         except Exception as exc:
             self.disconnect()
-            raise SSHConnectError(f"SSH connection failed ({exc})") from exc
+            raise SSHConnectError(exc) from exc
 
         self._state.update(CONNECTED, True)
         self._state.update(ERROR, False)
@@ -182,7 +184,7 @@ class SSH:
             try:
                 self.connect()
             except Exception as exc:
-                raise CommandError(f"Failed to connect ({exc})") from exc
+                raise CommandError("Failed to connect", exc) from exc
 
         if not self._state.connected:
             raise CommandError("Not connected")
@@ -192,7 +194,7 @@ class SSH:
                 return self._execute_invoke_shell(string, timeout)
             return self._execute(string, timeout)
         except TimeoutError as exc:
-            raise CommandError("Timeout during command") from exc
+            raise CommandError("Timeout during command", exc) from exc
         except CommandError:
             self.disconnect()
             raise
@@ -207,7 +209,7 @@ class SSH:
                 timeout=float(timeout),
             )
         except Exception as exc:
-            raise CommandError(f"Failed to execute command ({exc})") from exc
+            raise CommandError("Failed to execute command", exc) from exc
 
         try:
             return CommandOutput(
@@ -221,13 +223,13 @@ class SSH:
             stdin.channel.close()
             raise
         except Exception as exc:
-            raise CommandError(f"Failed to read command output ({exc})") from exc
+            raise CommandError("Failed to read command output", exc) from exc
 
     def _execute_invoke_shell(self, string: str, timeout: int) -> CommandOutput:
         try:
             channel = self._client.invoke_shell(width=4095)
         except Exception as exc:
-            raise CommandError(f"Failed to open channel ({exc})") from exc
+            raise CommandError("Failed to open channel", exc) from exc
 
         channel.settimeout(float(timeout))
         stdin_file = channel.makefile_stdin("wb")
@@ -236,7 +238,7 @@ class SSH:
         try:
             cmd = self._detect_cmd(stdout_file)
         except Exception as exc:
-            raise CommandError(f"Failed to detect shell ({exc})") from exc
+            raise CommandError("Failed to detect shell", exc) from exc
 
         try:
             for line in (stdin := string.splitlines()):
@@ -246,21 +248,21 @@ class SSH:
                 stdin_file.write(ECHO_STRING + "\r")
             stdin_file.write(EXIT_STRING + "\r")
         except Exception as exc:
-            raise CommandError(f"Failed to send command ({exc})") from exc
+            raise CommandError("Failed to send command", exc) from exc
 
         try:
             stdout_bytes = stdout_file.read()
         except TimeoutError:
             raise
         except Exception as exc:
-            raise CommandError(f"Failed to read command output ({exc})") from exc
+            raise CommandError("Failed to read command output", exc) from exc
         finally:
             channel.close()
 
         try:
             stdout, code = ShellParser(stdin).parse(stdout_bytes)
         except Exception as exc:
-            raise CommandError(f"Failed to parse command output ({exc})") from exc
+            raise CommandError("Failed to parse command output", exc) from exc
 
         return CommandOutput(
             string,

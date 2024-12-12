@@ -20,6 +20,7 @@ from terminal_manager import (
     Event,
     InvalidSensorError,
     Manager,
+    ManagerError,
     NameKeyError,
     NumberSensor,
     Sensor,
@@ -36,6 +37,7 @@ from .errors import (
     SSHAuthenticationError,
     SSHConnectError,
     SSHHostKeyUnknownError,
+    SSHManagerError,
 )
 from .ping import Ping
 from .ssh import SSH
@@ -215,7 +217,7 @@ class SSHManager(Manager):
 
         if not self.state.online:
             if raise_errors:
-                raise OfflineError("Host is offline")
+                raise OfflineError(self.host)
             return
 
         try:
