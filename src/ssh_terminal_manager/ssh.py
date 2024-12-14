@@ -1,10 +1,8 @@
 import logging
 import re
 import time
-import hashlib
 
 import paramiko
-import paramiko.ssh_exception
 from terminal_manager import CommandError, CommandOutput, Event
 
 from .errors import SSHAuthenticationError, SSHConnectError, SSHHostKeyUnknownError

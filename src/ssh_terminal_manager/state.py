@@ -1,4 +1,5 @@
 from logging import Logger
+
 from terminal_manager import Event
 
 ONLINE = "online"

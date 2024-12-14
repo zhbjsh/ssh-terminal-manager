@@ -11,6 +11,7 @@ from terminal_manager import (
     DEFAULT_COMMAND_TIMEOUT,
     PLACEHOLDER_KEY,
     ActionCommand,
+    ActionKey,
     BinarySensor,
     Collection,
     Command,
@@ -25,11 +26,11 @@ from terminal_manager import (
     NumberSensor,
     Sensor,
     SensorCommand,
+    SensorKey,
     TextSensor,
     VersionSensor,
     default_collections,
 )
-from terminal_manager.default_collections import ActionKey, SensorKey
 import wakeonlan
 
 from .errors import (
