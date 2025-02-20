@@ -89,7 +89,7 @@ class SSHManager(Manager):
             disconnect_mode,
             ssh_timeout,
         )
-        self._ssh.on_disconnect.subscribe(self.reset_sensors)
+        self._ssh.on_disconnect.subscribe(self.reset_commands)
         self._mac_address = None
 
     @property
