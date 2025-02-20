@@ -11,6 +11,7 @@ from terminal_manager import (
     Command,
     CommandError,
     CommandOutput,
+    ExecutionError,
     Manager,
 )
 import wakeonlan
@@ -156,7 +157,7 @@ class SSHManager(Manager):
         """Execute a command string.
 
         Raises:
-            CommandError
+            ExecutionError
 
         """
         timeout = command_timeout or self.command_timeout
@@ -179,7 +180,7 @@ class SSHManager(Manager):
         if self.state.connected:
             try:
                 await self.async_execute_command(_TEST_COMMAND)
-            except CommandError:
+            except (CommandError, ExecutionError):
                 pass
             else:
                 return
