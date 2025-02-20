@@ -1,4 +1,3 @@
-import paramiko
 from terminal_manager import ManagerError
 
 
@@ -9,8 +8,8 @@ class SSHManagerError(ManagerError):
 class OfflineError(SSHManagerError):
     """Error to indicate that the host is offline."""
 
-    def __init__(self, host: str) -> None:
-        super().__init__(f"Host {host} is offline")
+    def __init__(self, host: str, details: str | None = None) -> None:
+        super().__init__(f"Host {host} is offline", details)
         self.host = host
 
 
@@ -25,16 +24,12 @@ class SSHHostKeyUnknownError(SSHManagerError):
 class SSHAuthenticationError(SSHManagerError):
     """Error to indicate that the SSH authentication failed."""
 
-    def __init__(self, exc: Exception) -> None:
-        super().__init__("SSH authentication failed", exc)
-        if exc.__class__ == paramiko.AuthenticationException:
-            self.details = None
+    def __init__(self, details: str | None = None) -> None:
+        super().__init__("SSH authentication failed", details)
 
 
 class SSHConnectError(SSHManagerError):
     """Error to indicate that the SSH connection failed."""
 
-    def __init__(self, exc: Exception) -> None:
-        super().__init__("SSH connection failed", exc)
-        if isinstance(exc, OSError):
-            self.details = exc.strerror
+    def __init__(self, details: str) -> None:
+        super().__init__("SSH connection failed", details)
