@@ -150,22 +150,22 @@ class SSHManager(Manager):
             self.state.handle_auth_error()
             raise
         except SSHConnectError:
-            await self.async_disconnect()
+            self.disconnect()
             self.state.handle_connect_error()
             if raise_errors:
                 raise
         else:
             self.state.handle_connect_success()
 
-    async def async_disconnect(self) -> None:
+    def disconnect(self) -> None:
         """Disconnect."""
-        await _run_in_executor("SSHDisconnect", self._ssh.disconnect)
+        self._ssh.disconnect()
         self.state.handle_disconnect()
 
     async def async_close(self) -> None:
         """Close."""
         await super().async_close()
-        await self.async_disconnect()
+        self.disconnect()
         self.state.online = False
 
     async def async_execute_command_string(
@@ -206,12 +206,12 @@ class SSHManager(Manager):
         except TimeoutError as exc:
             raise ExecutionError("Timeout during command") from exc
         except ExecutionError:
-            await self.async_disconnect()
+            self.disconnect()
             self.state.handle_execute_error()
             raise
 
         if self.disconnect_mode and self.state.connected:
-            await self.async_disconnect()
+            self.disconnect()
 
         return output
 
