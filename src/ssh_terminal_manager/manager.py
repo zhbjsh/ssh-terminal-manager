@@ -153,8 +153,8 @@ class SSHManager(Manager):
             self.state.handle_connect_error()
             if raise_errors:
                 raise
-
-        self.state.handle_connect_success()
+        else:
+            self.state.handle_connect_success()
 
     async def async_disconnect(self) -> None:
         """Disconnect."""
