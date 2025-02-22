@@ -3,10 +3,10 @@ import re
 import time
 
 import paramiko
-from terminal_manager import CommandOutput, ExecutionError, Event
+from terminal_manager import CommandOutput, Event, ExecutionError
 
 from .errors import SSHAuthenticationError, SSHConnectError, SSHHostKeyUnknownError
-from .state import CONNECTED, ERROR, State
+from .state import State
 
 WIN_TITLE = re.compile(r"\x1b\]0\;.*?\x07")
 WIN_NEWLINE = re.compile(r"\x1b\[\d+\;1H")
@@ -149,11 +149,11 @@ class SSH:
             )
         except SSHHostKeyUnknownError:
             self.disconnect()
-            self._state.update(ERROR, True)
+            self._state.error = True
             raise
         except paramiko.AuthenticationException as exc:
             self.disconnect()
-            self._state.update(ERROR, True)
+            self._state.error = True
             if exc.__class__ == paramiko.AuthenticationException:
                 raise SSHAuthenticationError from exc
             raise SSHAuthenticationError(str(exc)) from exc
@@ -164,12 +164,12 @@ class SSH:
             self.disconnect()
             raise SSHConnectError(str(exc)) from exc
 
-        self._state.update(CONNECTED, True)
-        self._state.update(ERROR, False)
+        self._state.connected = True
+        self._state.error = False
 
     def disconnect(self, notify: bool = True) -> None:
         self._client.close()
-        self._state.update(CONNECTED, False)
+        self._state.connected = False
 
         if notify:
             self.on_disconnect.notify()

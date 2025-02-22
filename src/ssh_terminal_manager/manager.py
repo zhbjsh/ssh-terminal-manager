@@ -19,7 +19,7 @@ import wakeonlan
 from .errors import OfflineError, SSHConnectError
 from .ping import Ping
 from .ssh import SSH
-from .state import ONLINE, State
+from .state import State
 
 _LOGGER = logging.getLogger(__name__)
 _TEST_COMMAND = Command("echo ''")
@@ -147,7 +147,7 @@ class SSHManager(Manager):
         """Close."""
         await super().async_close()
         await self.async_disconnect()
-        self.state.update(ONLINE, False)
+        self.state.online = False
 
     async def async_execute_command_string(
         self,
@@ -189,9 +189,9 @@ class SSHManager(Manager):
             online = await self._ping.async_ping(self.host)
         except Exception as exc:  # noqa: BLE001
             self.logger.warning("%s: Ping request failed (%s)", self.name, exc)
-            self.state.update(ONLINE, False)
+            self.state.online = False
         else:
-            self.state.update(ONLINE, online)
+            self.state.online = online
 
         if not self.state.online:
             if raise_errors:

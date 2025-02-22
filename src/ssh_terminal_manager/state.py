@@ -2,9 +2,7 @@ from logging import Logger
 
 from terminal_manager import Event
 
-ONLINE = "online"
-CONNECTED = "connected"
-ERROR = "error"
+STATE_NAMES = ["online", "connected", "error"]
 
 
 class State:
@@ -17,10 +15,12 @@ class State:
         self._logger = logger
         self.on_change = Event()
 
-    def update(self, name, value) -> None:
-        if getattr(self, name) == value:
+    def __setattr__(self, name, value):
+        prev_value = getattr(self, name, None)
+        super().__setattr__(name, value)
+
+        if name not in STATE_NAMES or value == prev_value:
             return
 
-        setattr(self, name, value)
         self._logger.debug("%s: state.%s => %s", self._name, name, value)
         self.on_change.notify(self)
