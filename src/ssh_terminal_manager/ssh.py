@@ -3,10 +3,9 @@ import re
 import time
 
 import paramiko
-from terminal_manager import CommandOutput, Event, ExecutionError
+from terminal_manager import CommandOutput, ExecutionError
 
 from .errors import SSHAuthenticationError, SSHConnectError, SSHHostKeyUnknownError
-from .state import State
 
 WIN_TITLE = re.compile(r"\x1b\]0\;.*?\x07")
 WIN_NEWLINE = re.compile(r"\x1b\[\d+\;1H")
@@ -94,7 +93,6 @@ class ShellParser:
 class SSH:
     def __init__(
         self,
-        state: State,
         host: str,
         port: int,
         username: str,
@@ -104,10 +102,8 @@ class SSH:
         add_host_keys: bool,
         load_system_host_keys: bool,
         invoke_shell: bool,
-        disconnect_mode: bool,
         timeout: int,
     ):
-        self._state = state
         self._host = host
         self._port = port
         self._username = username
@@ -116,7 +112,6 @@ class SSH:
         self._host_keys_filename = host_keys_filename
         self._load_system_host_keys = load_system_host_keys
         self._timeout = timeout
-        self._disconnect_mode = disconnect_mode
         self._invoke_shell = invoke_shell
         self._client = paramiko.SSHClient()
         self._client.set_log_channel("paramiko")
@@ -128,14 +123,7 @@ class SSH:
     def host(self) -> str:
         return self._host
 
-    @property
-    def disconnect_mode(self) -> bool:
-        return self._disconnect_mode
-
     def connect(self) -> None:
-        if self._state.connected:
-            return
-
         try:
             self._client.connect(
                 self._host,
@@ -147,27 +135,18 @@ class SSH:
                 allow_agent=False,
             )
         except SSHHostKeyUnknownError:
-            self._state.handle_auth_error()
             raise
         except paramiko.AuthenticationException as exc:
-            self._state.handle_auth_error()
             if exc.__class__ == paramiko.AuthenticationException:
                 raise SSHAuthenticationError from exc
             raise SSHAuthenticationError(str(exc)) from exc
         except OSError as exc:
-            self.disconnect()
-            self._state.handle_connect_error()
             raise SSHConnectError(exc.strerror) from exc
         except Exception as exc:
-            self.disconnect()
-            self._state.handle_connect_error()
             raise SSHConnectError(str(exc)) from exc
-
-        self._state.handle_connect_success()
 
     def disconnect(self) -> None:
         self._client.close()
-        self._state.handle_disconnect()
 
     def load_host_keys(self) -> None:
         if self._load_system_host_keys:
@@ -178,31 +157,9 @@ class SSH:
             self._client.load_host_keys(self._host_keys_filename)
 
     def execute_command_string(self, string: str, timeout: int) -> CommandOutput:
-        if self._disconnect_mode and self._state.online and not self._state.connected:
-            try:
-                self.connect()
-            except Exception as exc:
-                raise ExecutionError(f"Failed to connect: {exc}") from exc
-
-        if not self._state.connected:
-            raise ExecutionError("Not connected")
-
-        try:
-            if self._invoke_shell:
-                output = self._execute_invoke_shell(string, timeout)
-            else:
-                output = self._execute(string, timeout)
-        except TimeoutError as exc:
-            raise ExecutionError("Timeout during command") from exc
-        except ExecutionError:
-            self.disconnect()
-            self._state.handle_execute_error()
-            raise
-
-        if self._disconnect_mode and self._state.connected:
-            self.disconnect()
-
-        return output
+        if self._invoke_shell:
+            return self._execute_invoke_shell(string, timeout)
+        return self._execute(string, timeout)
 
     def _execute(self, string: str, timeout: int) -> CommandOutput:
         try:

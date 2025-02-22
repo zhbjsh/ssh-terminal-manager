@@ -16,7 +16,12 @@ from terminal_manager import (
 )
 import wakeonlan
 
-from .errors import OfflineError, SSHConnectError
+from .errors import (
+    OfflineError,
+    SSHAuthenticationError,
+    SSHConnectError,
+    SSHHostKeyUnknownError,
+)
 from .ping import Ping
 from .ssh import SSH
 from .state import State
@@ -73,7 +78,6 @@ class SSHManager(Manager):
             ping_timeout,
         )
         self._ssh = SSH(
-            self.state,
             host,
             port,
             username,
@@ -83,10 +87,10 @@ class SSHManager(Manager):
             add_host_keys,
             load_system_host_keys,
             invoke_shell,
-            disconnect_mode,
             ssh_timeout,
         )
         self._mac_address = None
+        self.disconnect_mode = disconnect_mode
 
     @property
     def is_up(self) -> bool:
@@ -97,10 +101,6 @@ class SSHManager(Manager):
     @property
     def is_down(self) -> bool:
         return not self.state.online
-
-    @property
-    def disconnect_mode(self) -> bool:
-        return self._ssh.disconnect_mode
 
     @property
     def host(self) -> str:
@@ -114,20 +114,38 @@ class SSHManager(Manager):
         """Set the MAC address."""
         self._mac_address = mac_address
 
-    async def async_connect(self) -> None:
+    async def async_connect(self, *, raise_errors: bool = False) -> None:
         """Connect.
+
+        Return if already connected. Reset sensor commands if any error occures
+        and set `state.error` to `True` in case of an auth error.
 
         Raises:
             SSHHostKeyUnknownError
             SSHAuthenticationError
-            SSHConnectError
+            SSHConnectError (only with `raise_errors=True`)
 
         """
-        await _run_in_executor(self._ssh.connect)
+        if self.state.connected:
+            return
+
+        try:
+            await _run_in_executor(self._ssh.connect)
+        except (SSHHostKeyUnknownError, SSHAuthenticationError):
+            self.state.handle_auth_error()
+            raise
+        except SSHConnectError:
+            await self.async_disconnect()
+            self.state.handle_connect_error()
+            if raise_errors:
+                raise
+
+        self.state.handle_connect_success()
 
     async def async_disconnect(self) -> None:
         """Disconnect."""
         await _run_in_executor(self._ssh.disconnect)
+        self.state.handle_disconnect()
 
     async def async_close(self) -> None:
         """Close."""
@@ -142,12 +160,44 @@ class SSHManager(Manager):
     ) -> CommandOutput:
         """Execute a command string.
 
+        Connect before and disconnect after execution if `disconnect_mode` is enabled.
+        Raise `ExecutionError` if not online, not connected or failed to connect while
+        in `disconnect_mode`.
+        Reset sensor commands if an error occures while connecting or executing.
+
         Raises:
             ExecutionError
 
         """
-        timeout = command_timeout or self.command_timeout
-        return await _run_in_executor(self._ssh.execute_command_string, string, timeout)
+        if not self.state.online:
+            raise ExecutionError("Not online")
+
+        if self.disconnect_mode and not self.state.connected:
+            try:
+                await self.async_connect(raise_errors=True)
+            except Exception as exc:
+                raise ExecutionError(f"Failed to connect: {exc}") from exc
+
+        if not self.state.connected:
+            raise ExecutionError("Not connected")
+
+        try:
+            output = await _run_in_executor(
+                self._ssh.execute_command_string,
+                string,
+                command_timeout or self.command_timeout,
+            )
+        except TimeoutError as exc:
+            raise ExecutionError("Timeout during command") from exc
+        except ExecutionError:
+            await self.async_disconnect()
+            self.state.handle_execute_error()
+            raise
+
+        if self.disconnect_mode and self.state.connected:
+            await self.async_disconnect()
+
+        return output
 
     async def async_update(
         self,
@@ -203,11 +253,7 @@ class SSHManager(Manager):
         self.state.handle_ping_success()
 
         if not self.disconnect_mode:
-            try:
-                await self.async_connect()
-            except SSHConnectError:
-                if raise_errors:
-                    raise
+            await self.async_connect(raise_errors=raise_errors)
 
         if self.state.connected or self.disconnect_mode:
             await super().async_update(
