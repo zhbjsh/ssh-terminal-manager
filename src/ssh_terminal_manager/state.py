@@ -35,6 +35,10 @@ class State:
         self.on_change.notify(self)
 
     def handle_ping_error(self) -> None:
+        if self.connected:
+            self._manager.disconnect()
+        if self.online:
+            self._manager.reset_commands()
         self.online = False
 
     def handle_ping_success(self) -> None:
