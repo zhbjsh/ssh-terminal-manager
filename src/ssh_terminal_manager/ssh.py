@@ -123,7 +123,6 @@ class SSH:
         self._client.set_missing_host_key_policy(
             paramiko.AutoAddPolicy if add_host_keys else CustomRejectPolicy
         )
-        self.on_disconnect = Event()
 
     @property
     def host(self) -> str:
@@ -148,30 +147,27 @@ class SSH:
                 allow_agent=False,
             )
         except SSHHostKeyUnknownError:
-            self.disconnect()
             self._state.handle_auth_error()
             raise
         except paramiko.AuthenticationException as exc:
-            self.disconnect()
             self._state.handle_auth_error()
             if exc.__class__ == paramiko.AuthenticationException:
                 raise SSHAuthenticationError from exc
             raise SSHAuthenticationError(str(exc)) from exc
         except OSError as exc:
             self.disconnect()
+            self._state.handle_connect_error()
             raise SSHConnectError(exc.strerror) from exc
         except Exception as exc:
             self.disconnect()
+            self._state.handle_connect_error()
             raise SSHConnectError(str(exc)) from exc
 
         self._state.handle_connect_success()
 
-    def disconnect(self, notify: bool = True) -> None:
+    def disconnect(self) -> None:
         self._client.close()
         self._state.handle_disconnect()
-
-        if notify:
-            self.on_disconnect.notify()
 
     def load_host_keys(self) -> None:
         if self._load_system_host_keys:
@@ -193,16 +189,20 @@ class SSH:
 
         try:
             if self._invoke_shell:
-                return self._execute_invoke_shell(string, timeout)
-            return self._execute(string, timeout)
+                output = self._execute_invoke_shell(string, timeout)
+            else:
+                output = self._execute(string, timeout)
         except TimeoutError as exc:
             raise ExecutionError("Timeout during command") from exc
         except ExecutionError:
             self.disconnect()
+            self._state.handle_execute_error()
             raise
-        finally:
-            if self._disconnect_mode and self._state.connected:
-                self.disconnect(False)
+
+        if self._disconnect_mode and self._state.connected:
+            self.disconnect()
+
+        return output
 
     def _execute(self, string: str, timeout: int) -> CommandOutput:
         try:

@@ -68,10 +68,7 @@ class SSHManager(Manager):
             collection=collection,
             logger=logger,
         )
-        self.state = State(
-            self.name,
-            self.logger,
-        )
+        self.state = State(self)
         self._ping = Ping(
             ping_timeout,
         )
@@ -89,7 +86,6 @@ class SSHManager(Manager):
             disconnect_mode,
             ssh_timeout,
         )
-        self._ssh.on_disconnect.subscribe(self.reset_commands)
         self._mac_address = None
 
     @property
