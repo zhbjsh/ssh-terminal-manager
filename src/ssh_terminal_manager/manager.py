@@ -74,9 +74,7 @@ class SSHManager(Manager):
             logger=logger,
         )
         self.state = State(self)
-        self._ping = Ping(
-            ping_timeout,
-        )
+        self._ping = Ping(ping_timeout)
         self._ssh = SSH(
             host,
             port,
@@ -113,6 +111,22 @@ class SSHManager(Manager):
     def set_mac_address(self, mac_address: str | None) -> None:
         """Set the MAC address."""
         self._mac_address = mac_address
+
+    async def async_ping(self, *, raise_errors: bool = False) -> None:
+        """Ping.
+
+        Raises:
+            OfflineError (only with `raise_errors=True`)
+
+        """
+        try:
+            await self._ping.async_ping(self.host)
+        except OfflineError:
+            self.state.handle_ping_error()
+            if raise_errors:
+                raise
+        else:
+            self.state.handle_ping_success()
 
     async def async_connect(self, *, raise_errors: bool = False) -> None:
         """Connect.
@@ -236,21 +250,10 @@ class SSHManager(Manager):
             else:
                 return
 
-        try:
-            online = await self._ping.async_ping(self.host)
-        except Exception as exc:
-            self.state.handle_ping_error()
-            if raise_errors:
-                raise OfflineError(self.host, str(exc)) from exc
-            return
+        await self.async_ping(raise_errors=raise_errors)
 
-        if not online:
-            self.state.handle_ping_error()
-            if raise_errors:
-                raise OfflineError(self.host)
+        if not self.state.online:
             return
-
-        self.state.handle_ping_success()
 
         if not self.disconnect_mode:
             await self.async_connect(raise_errors=raise_errors)

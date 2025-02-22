@@ -3,6 +3,8 @@ from contextlib import suppress
 
 import icmplib
 
+from .errors import OfflineError
+
 
 class Ping:
     use_icmplib: bool | None = None
@@ -52,11 +54,16 @@ class Ping:
 
         return process.returncode == 0
 
-    async def async_ping(self, host: str):
-        if self.use_icmplib is None:
-            self.use_icmplib = await self._async_test_icmplib()
+    async def async_ping(self, host: str) -> None:
+        try:
+            if self.use_icmplib is None:
+                self.use_icmplib = await self._async_test_icmplib()
+            if self.use_icmplib:
+                online = await self._async_ping_icmplib(host)
+            else:
+                online = await self._async_ping_process(host)
+        except Exception as exc:
+            raise OfflineError(host, str(exc)) from exc
 
-        if self.use_icmplib:
-            return await self._async_ping_icmplib(host)
-
-        return await self._async_ping_process(host)
+        if not online:
+            raise OfflineError(host)
