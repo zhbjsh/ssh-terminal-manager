@@ -149,11 +149,11 @@ class SSH:
             )
         except SSHHostKeyUnknownError:
             self.disconnect()
-            self._state.error = True
+            self._state.handle_auth_error()
             raise
         except paramiko.AuthenticationException as exc:
             self.disconnect()
-            self._state.error = True
+            self._state.handle_auth_error()
             if exc.__class__ == paramiko.AuthenticationException:
                 raise SSHAuthenticationError from exc
             raise SSHAuthenticationError(str(exc)) from exc
@@ -164,12 +164,11 @@ class SSH:
             self.disconnect()
             raise SSHConnectError(str(exc)) from exc
 
-        self._state.connected = True
-        self._state.error = False
+        self._state.handle_connect_success()
 
     def disconnect(self, notify: bool = True) -> None:
         self._client.close()
-        self._state.connected = False
+        self._state.handle_disconnect()
 
         if notify:
             self.on_disconnect.notify()

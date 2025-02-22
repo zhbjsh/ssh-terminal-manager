@@ -187,16 +187,19 @@ class SSHManager(Manager):
 
         try:
             online = await self._ping.async_ping(self.host)
-        except Exception as exc:  # noqa: BLE001
-            self.logger.warning("%s: Ping request failed (%s)", self.name, exc)
-            self.state.online = False
-        else:
-            self.state.online = online
+        except Exception as exc:
+            self.state.handle_ping_error()
+            if raise_errors:
+                raise OfflineError(self.host, str(exc)) from exc
+            return
 
-        if not self.state.online:
+        if not online:
+            self.state.handle_ping_error()
             if raise_errors:
                 raise OfflineError(self.host)
             return
+
+        self.state.handle_ping_success()
 
         try:
             await self.async_connect()
