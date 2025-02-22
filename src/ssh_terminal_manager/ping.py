@@ -55,6 +55,12 @@ class Ping:
         return process.returncode == 0
 
     async def async_ping(self, host: str) -> None:
+        """Ping.
+
+        Raises:
+            OfflineError
+
+        """
         try:
             if self.use_icmplib is None:
                 self.use_icmplib = await self._async_test_icmplib()

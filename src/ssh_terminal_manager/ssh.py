@@ -124,6 +124,14 @@ class SSH:
         return self._host
 
     def connect(self) -> None:
+        """Connect.
+
+        Raises:
+            SSHHostKeyUnknownError
+            SSHAuthenticationError
+            SSHConnectError
+
+        """
         try:
             self._client.connect(
                 self._host,
@@ -146,9 +154,11 @@ class SSH:
             raise SSHConnectError(str(exc)) from exc
 
     def disconnect(self) -> None:
+        """Disconnect."""
         self._client.close()
 
     def load_host_keys(self) -> None:
+        """Load host keys."""
         if self._load_system_host_keys:
             self._client.load_system_host_keys()
         if self._host_keys_filename:
@@ -157,6 +167,13 @@ class SSH:
             self._client.load_host_keys(self._host_keys_filename)
 
     def execute_command_string(self, string: str, timeout: int) -> CommandOutput:
+        """Execute a command string.
+
+        Raises:
+            ExecutionError
+            TimeoutError
+
+        """
         if self._invoke_shell:
             return self._execute_invoke_shell(string, timeout)
         return self._execute(string, timeout)
