@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 import logging
 
@@ -38,9 +39,9 @@ DEFAULT_DISCONNECT_MODE = False
 DEFAULT_INVOKE_SHELL = False
 
 
-async def _run_in_executor(func, *args):
+async def _run_in_executor(prefix: str, func: Callable, *args):
     loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor(thread_name_prefix="SSH") as executor:
+    with ThreadPoolExecutor(thread_name_prefix=prefix) as executor:
         return await loop.run_in_executor(executor, func, *args)
 
 
@@ -144,7 +145,7 @@ class SSHManager(Manager):
             return
 
         try:
-            await _run_in_executor(self._ssh.connect)
+            await _run_in_executor("SSHConnect", self._ssh.connect)
         except (SSHHostKeyUnknownError, SSHAuthenticationError):
             self.state.handle_auth_error()
             raise
@@ -158,7 +159,7 @@ class SSHManager(Manager):
 
     async def async_disconnect(self) -> None:
         """Disconnect."""
-        await _run_in_executor(self._ssh.disconnect)
+        await _run_in_executor("SSHDisconnect", self._ssh.disconnect)
         self.state.handle_disconnect()
 
     async def async_close(self) -> None:
@@ -197,6 +198,7 @@ class SSHManager(Manager):
 
         try:
             output = await _run_in_executor(
+                "SSHExecute",
                 self._ssh.execute_command_string,
                 string,
                 command_timeout or self.command_timeout,
@@ -281,4 +283,4 @@ class SSHManager(Manager):
 
     async def async_load_host_keys(self) -> None:
         """Load host keys."""
-        return await _run_in_executor(self._ssh.load_host_keys)
+        return await _run_in_executor("SSHLoadHostKeys", self._ssh.load_host_keys)
