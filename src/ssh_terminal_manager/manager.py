@@ -115,11 +115,7 @@ class SSHManager(Manager):
         self._mac_address = mac_address
 
     async def async_connect(self) -> None:
-        """Connect the SSH client.
-
-        Set `state.connected` to `True` and update all sensor
-        commands if successful, otherwise raise an error.
-        Doesnt do anything in `disconnect_mode`.
+        """Connect.
 
         Raises:
             SSHHostKeyUnknownError
@@ -127,16 +123,10 @@ class SSHManager(Manager):
             SSHConnectError
 
         """
-        if self.disconnect_mode:
-            return
         await _run_in_executor(self._ssh.connect)
-        await self.async_update_sensor_commands(force=True)
 
     async def async_disconnect(self) -> None:
-        """Disconnect the SSH client.
-
-        Set `state.connected` to `False`.
-        """
+        """Disconnect."""
         await _run_in_executor(self._ssh.disconnect)
 
     async def async_close(self) -> None:
@@ -159,23 +149,38 @@ class SSHManager(Manager):
         timeout = command_timeout or self.command_timeout
         return await _run_in_executor(self._ssh.execute_command_string, string, timeout)
 
-    async def async_update_state(
+    async def async_update(
         self,
         *,
+        force: bool = False,
+        once: bool = False,
+        test: bool = False,
         raise_errors: bool = False,
     ) -> None:
-        """Update state.
+        """Update state and sensor commands, raise errors when done.
+
+        Commands that raised a `CommandError` count as updated.
+        If `force=True`, update all commands.
+        If `once=True`, update only commands that have never been updated before.
+        If `test=True`, execute a test command if there are no commands to update.
 
         Raises:
             OfflineError (only with `raise_errors=True`)
             SSHHostKeyUnknownError
             SSHAuthenticationError
             SSHConnectError (only with `raise_errors=True`)
+            CommandError (only with `raise_errors=True`)
+            ExecuteError (only with `raise_errors=True`)
 
         """
-        if self.state.connected:
+        if self.is_up:
             try:
-                await self.async_execute_command(_TEST_COMMAND)
+                await super().async_update(
+                    force=force,
+                    once=once,
+                    test=test,
+                    raise_errors=True,
+                )
             except (CommandError, ExecutionError):
                 pass
             else:
@@ -197,11 +202,20 @@ class SSHManager(Manager):
 
         self.state.handle_ping_success()
 
-        try:
-            await self.async_connect()
-        except SSHConnectError:
-            if raise_errors:
-                raise
+        if not self.disconnect_mode:
+            try:
+                await self.async_connect()
+            except SSHConnectError:
+                if raise_errors:
+                    raise
+
+        if self.state.connected or self.disconnect_mode:
+            await super().async_update(
+                force=force,
+                test=test,
+                once=once,
+                raise_errors=raise_errors,
+            )
 
     async def async_turn_on(self) -> None:
         """Turn on by Wake on LAN.
