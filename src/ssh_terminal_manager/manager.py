@@ -121,7 +121,7 @@ class SSHManager(Manager):
         """Ping.
 
         Raises:
-            OfflineError
+            `OfflineError`
 
         """
         try:
@@ -139,9 +139,9 @@ class SSHManager(Manager):
         and set `state.error` to `True` in case of an auth error.
 
         Raises:
-            SSHHostKeyUnknownError
-            SSHAuthenticationError
-            SSHConnectError
+            `SSHHostKeyUnknownError`
+            `SSHAuthenticationError`
+            `SSHConnectError`
 
         """
         if self.state.connected:
@@ -189,7 +189,7 @@ class SSHManager(Manager):
         while connecting or executing.
 
         Raises:
-            ExecutionError
+            `ExecutionError`
 
         """
         if self.disconnect_mode:
@@ -237,12 +237,12 @@ class SSHManager(Manager):
         Never execute a test command in `disconnect_mode`.
 
         Raises:
-            OfflineError (only with `raise_errors`)
-            SSHHostKeyUnknownError
-            SSHAuthenticationError
-            SSHConnectError (only with `raise_errors`)
-            CommandError (only with `raise_errors`)
-            ExecuteError (only with `raise_errors`)
+            `OfflineError` (only with `raise_errors`)
+            `SSHHostKeyUnknownError`
+            `SSHAuthenticationError`
+            `SSHConnectError` (only with `raise_errors`)
+            `CommandError` (only with `raise_errors`)
+            `ExecuteError` (only with `raise_errors`)
 
         """
         self.state.handle_update()
@@ -286,7 +286,7 @@ class SSHManager(Manager):
         """Turn on by Wake on LAN.
 
         Raises:
-            ValueError
+            `ValueError`
 
         """
         if self.state.online:
@@ -303,10 +303,10 @@ class SSHManager(Manager):
         """Turn off by running the `TURN_OFF` action.
 
         Raises:
-            PermissionError
-            KeyError
-            CommandError
-            ExecutionError
+            `PermissionError`
+            `KeyError`
+            `CommandError`
+            `ExecutionError`
 
         """
         output = await super().async_turn_off()
@@ -318,9 +318,9 @@ class SSHManager(Manager):
         """Restart by running the `RESTART` action.
 
         Raises:
-            KeyError
-            CommandError
-            ExecutionError
+            `KeyError`
+            `CommandError`
+            `ExecutionError`
 
         """
         output = await super().async_restart()

@@ -127,9 +127,9 @@ class SSH:
         """Connect.
 
         Raises:
-            SSHHostKeyUnknownError
-            SSHAuthenticationError
-            SSHConnectError
+            `SSHHostKeyUnknownError`
+            `SSHAuthenticationError`
+            `SSHConnectError`
 
         """
         try:
@@ -170,8 +170,8 @@ class SSH:
         """Execute a command string.
 
         Raises:
-            ExecutionError
-            TimeoutError
+            `ExecutionError`
+            `TimeoutError`
 
         """
         if self._invoke_shell:

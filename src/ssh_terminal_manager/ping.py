@@ -58,7 +58,7 @@ class Ping:
         """Ping.
 
         Raises:
-            OfflineError
+            `OfflineError`
 
         """
         try:
