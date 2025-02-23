@@ -149,8 +149,10 @@ class SSH:
                 raise SSHAuthenticationError from exc
             raise SSHAuthenticationError(str(exc)) from exc
         except OSError as exc:
+            self.disconnect()
             raise SSHConnectError(exc.strerror) from exc
         except Exception as exc:
+            self.disconnect()
             raise SSHConnectError(str(exc)) from exc
 
     def disconnect(self) -> None:
@@ -174,9 +176,13 @@ class SSH:
             `TimeoutError`
 
         """
-        if self._invoke_shell:
-            return self._execute_invoke_shell(string, timeout)
-        return self._execute(string, timeout)
+        try:
+            if self._invoke_shell:
+                return self._execute_invoke_shell(string, timeout)
+            return self._execute(string, timeout)
+        except ExecutionError:
+            self.disconnect()
+            raise
 
     def _execute(self, string: str, timeout: int) -> CommandOutput:
         try:

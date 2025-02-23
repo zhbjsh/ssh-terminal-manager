@@ -159,14 +159,19 @@ class SSHManager(Manager):
             self.state.handle_auth_error()
             raise
         except SSHConnectError:
-            self.disconnect()
             self.state.handle_connect_error()
             raise
         else:
             self.state.handle_connect_success()
 
     def disconnect(self) -> None:
-        """Disconnect."""
+        """Disconnect.
+
+        Return if already disconnected.
+        """
+        if not self.state.connected:
+            return
+
         self._ssh.disconnect()
         self.state.handle_disconnect()
 
@@ -211,7 +216,6 @@ class SSHManager(Manager):
         except TimeoutError as exc:
             raise ExecutionError("Timeout during command") from exc
         except ExecutionError:
-            self.disconnect()
             self.state.handle_execute_error()
             raise
 

@@ -88,6 +88,7 @@ class State:
         self.connected = False
 
     def handle_execute_error(self) -> None:
+        self.connected = False
         self._manager.reset_commands()
 
     def handle_turn_on(self) -> None:
