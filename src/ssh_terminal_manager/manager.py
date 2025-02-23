@@ -25,7 +25,7 @@ from .errors import (
 )
 from .ping import Ping
 from .ssh import SSH
-from .state import State
+from .state import Request, State
 
 _LOGGER = logging.getLogger(__name__)
 _TEST_COMMAND = Command("echo ''")
@@ -94,12 +94,16 @@ class SSHManager(Manager):
     @property
     def is_up(self) -> bool:
         if self.disconnect_mode:
-            return self.state.online
+            return self.state.online and self.state.request != Request.CONNECT
         return self.state.connected
 
     @property
     def is_down(self) -> bool:
         return not self.state.online
+
+    @property
+    def is_shutting_down(self) -> bool:
+        return self.state.request in [Request.TURN_OFF, Request.RESTART]
 
     @property
     def host(self) -> str:
@@ -113,23 +117,22 @@ class SSHManager(Manager):
         """Set the MAC address."""
         self._mac_address = mac_address
 
-    async def async_ping(self, *, raise_errors: bool = False) -> None:
+    async def async_ping(self) -> None:
         """Ping.
 
         Raises:
-            OfflineError (only with `raise_errors=True`)
+            OfflineError
 
         """
         try:
             await self._ping.async_ping(self.host)
         except OfflineError:
             self.state.handle_ping_error()
-            if raise_errors:
-                raise
+            raise
         else:
             self.state.handle_ping_success()
 
-    async def async_connect(self, *, raise_errors: bool = False) -> None:
+    async def async_connect(self) -> None:
         """Connect.
 
         Return if already connected. Reset sensor commands if any error occures
@@ -138,11 +141,17 @@ class SSHManager(Manager):
         Raises:
             SSHHostKeyUnknownError
             SSHAuthenticationError
-            SSHConnectError (only with `raise_errors=True`)
+            SSHConnectError
 
         """
         if self.state.connected:
             return
+
+        if not self.state.online:
+            raise SSHConnectError("Host is offline")
+
+        if self.is_shutting_down:
+            raise SSHConnectError("Host is shutting down")
 
         try:
             await _run_in_executor("SSHConnect", self._ssh.connect)
@@ -152,8 +161,7 @@ class SSHManager(Manager):
         except SSHConnectError:
             self.disconnect()
             self.state.handle_connect_error()
-            if raise_errors:
-                raise
+            raise
         else:
             self.state.handle_connect_success()
 
@@ -175,21 +183,18 @@ class SSHManager(Manager):
     ) -> CommandOutput:
         """Execute a command string.
 
-        Connect before and disconnect after execution if `disconnect_mode` is enabled.
-        Raise `ExecutionError` if not online, not connected or failed to connect while
-        in `disconnect_mode`.
-        Reset sensor commands if an error occures while connecting or executing.
+        Connect before and disconnect after execution if `disconnect_mode` is
+        enabled. Raise `ExecutionError` if not connected or failed to connect
+        when in `disconnect_mode`. Reset sensor commands if an error occures
+        while connecting or executing.
 
         Raises:
             ExecutionError
 
         """
-        if not self.state.online:
-            raise ExecutionError("Not online")
-
-        if self.disconnect_mode and not self.state.connected:
+        if self.disconnect_mode:
             try:
-                await self.async_connect(raise_errors=True)
+                await self.async_connect()
             except Exception as exc:
                 raise ExecutionError(f"Failed to connect: {exc}") from exc
 
@@ -210,7 +215,7 @@ class SSHManager(Manager):
             self.state.handle_execute_error()
             raise
 
-        if self.disconnect_mode and self.state.connected:
+        if self.disconnect_mode:
             self.disconnect()
 
         return output
@@ -226,20 +231,23 @@ class SSHManager(Manager):
         """Update state and sensor commands, raise errors when done.
 
         Commands that raised a `CommandError` count as updated.
-        If `force=True`, update all commands.
-        If `once=True`, update only commands that have never been updated before.
-        If `test=True`, execute a test command if there are no commands to update.
+        Update all commands with `force`.
+        Update only commands that have never been updated before with `once`.
+        Execute a test command if there are no commands to update with `test`.
+        Never execute a test command in `disconnect_mode`.
 
         Raises:
-            OfflineError (only with `raise_errors=True`)
+            OfflineError (only with `raise_errors`)
             SSHHostKeyUnknownError
             SSHAuthenticationError
-            SSHConnectError (only with `raise_errors=True`)
-            CommandError (only with `raise_errors=True`)
-            ExecuteError (only with `raise_errors=True`)
+            SSHConnectError (only with `raise_errors`)
+            CommandError (only with `raise_errors`)
+            ExecuteError (only with `raise_errors`)
 
         """
-        if self.is_up:
+        self.state.handle_update()
+
+        if self.state.connected and not self.disconnect_mode:
             try:
                 await super().async_update(
                     force=force,
@@ -252,21 +260,27 @@ class SSHManager(Manager):
             else:
                 return
 
-        await self.async_ping(raise_errors=raise_errors)
-
-        if not self.state.online:
+        try:
+            await self.async_ping()
+        except OfflineError:
+            if raise_errors:
+                raise
             return
 
         if not self.disconnect_mode:
-            await self.async_connect(raise_errors=raise_errors)
+            try:
+                await self.async_connect()
+            except SSHConnectError:
+                if raise_errors:
+                    raise
+                return
 
-        if self.state.connected or self.disconnect_mode:
-            await super().async_update(
-                force=force,
-                test=test,
-                once=once,
-                raise_errors=raise_errors,
-            )
+        await super().async_update(
+            force=force,
+            test=test and not self.disconnect_mode,
+            once=once,
+            raise_errors=raise_errors,
+        )
 
     async def async_turn_on(self) -> None:
         """Turn on by Wake on LAN.
@@ -275,11 +289,44 @@ class SSHManager(Manager):
             ValueError
 
         """
+        if self.state.online:
+            return
+
         if self.mac_address is None:
             raise ValueError("No MAC Address set")
 
         wakeonlan.send_magic_packet(self.mac_address)
         self.logger.debug("%s: Magic packet sent to %s", self.name, self.mac_address)
+        self.state.handle_turn_on()
+
+    async def async_turn_off(self) -> CommandOutput:
+        """Turn off by running the `TURN_OFF` action.
+
+        Raises:
+            PermissionError
+            KeyError
+            CommandError
+            ExecutionError
+
+        """
+        output = await super().async_turn_off()
+        self.disconnect()
+        self.state.handle_turn_off()
+        return output
+
+    async def async_restart(self) -> CommandOutput:
+        """Restart by running the `RESTART` action.
+
+        Raises:
+            KeyError
+            CommandError
+            ExecutionError
+
+        """
+        output = await super().async_restart()
+        self.disconnect()
+        self.state.handle_restart()
+        return output
 
     async def async_load_host_keys(self) -> None:
         """Load host keys."""
