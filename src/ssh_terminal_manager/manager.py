@@ -10,7 +10,6 @@ from terminal_manager import (
     DEFAULT_COMMAND_TIMEOUT,
     Collection,
     Command,
-    CommandError,
     CommandOutput,
     ExecutionError,
     Manager,
@@ -234,7 +233,6 @@ class SSHManager(Manager):
     ) -> None:
         """Update state and sensor commands, raise errors when done.
 
-        Commands that raised a `CommandError` count as updated.
         Update all commands with `force`.
         Update only commands that have never been updated before with `once`.
         Execute a test command if there are no commands to update with `test`.
@@ -245,8 +243,7 @@ class SSHManager(Manager):
             `SSHHostKeyUnknownError`
             `SSHAuthenticationError`
             `SSHConnectError` (only with `raise_errors`)
-            `CommandError` (only with `raise_errors`)
-            `ExecuteError` (only with `raise_errors`)
+            `ExecutionError` (only with `raise_errors`)
 
         """
         self.state.handle_update()
@@ -259,7 +256,7 @@ class SSHManager(Manager):
                     test=test,
                     raise_errors=True,
                 )
-            except (CommandError, ExecutionError):
+            except ExecutionError:
                 pass
             else:
                 return
@@ -309,7 +306,6 @@ class SSHManager(Manager):
         Raises:
             `PermissionError`
             `KeyError`
-            `CommandError`
             `ExecutionError`
 
         """
@@ -323,7 +319,6 @@ class SSHManager(Manager):
 
         Raises:
             `KeyError`
-            `CommandError`
             `ExecutionError`
 
         """
