@@ -9,7 +9,6 @@ from terminal_manager import (
     DEFAULT_ALLOW_TURN_OFF,
     DEFAULT_COMMAND_TIMEOUT,
     Collection,
-    Command,
     CommandOutput,
     ExecutionError,
     Manager,
@@ -27,7 +26,6 @@ from .ssh import SSH
 from .state import Request, State
 
 _LOGGER = logging.getLogger(__name__)
-_TEST_COMMAND = Command("echo ''")
 
 DEFAULT_PORT = 22
 DEFAULT_PING_TIMEOUT = 4
