@@ -42,8 +42,8 @@ from .manager import (
     DEFAULT_PORT,
     DEFAULT_SSH_TIMEOUT,
     SSHManager,
-    State,
 )
+from .state import Request, State
 
 __all__ = [
     "DEFAULT_ALLOW_TURN_OFF",
@@ -82,5 +82,6 @@ __all__ = [
     "DEFAULT_PORT",
     "DEFAULT_SSH_TIMEOUT",
     "SSHManager",
+    "Request",
     "State",
 ]
