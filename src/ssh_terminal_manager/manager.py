@@ -90,13 +90,20 @@ class SSHManager(Manager):
 
     @property
     def is_up(self) -> bool:
-        if self.disconnect_mode:
-            return self.state.online and self.state.request != Request.CONNECT
-        return self.state.connected
+        return self.state.connected or (
+            self.disconnect_mode
+            and self.state.online
+            and not self.state.request
+            and not self.state.error
+        )
 
     @property
     def is_down(self) -> bool:
         return not self.state.online
+
+    @property
+    def is_starting_up(self) -> bool:
+        return self.state.request in [Request.TURN_ON, Request.CONNECT]
 
     @property
     def is_shutting_down(self) -> bool:
@@ -194,7 +201,7 @@ class SSHManager(Manager):
             `ExecutionError`
 
         """
-        if self.disconnect_mode:
+        if self.disconnect_mode and self.is_up:
             try:
                 await self.async_connect()
             except Exception as exc:
