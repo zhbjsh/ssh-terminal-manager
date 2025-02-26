@@ -281,12 +281,19 @@ class SSHManager(Manager):
                     raise
                 return
 
-        await super().async_update(
-            force=force,
-            test=test and not self.disconnect_mode,
-            once=once,
-            raise_errors=raise_errors,
-        )
+        try:
+            await super().async_update(
+                force=force,
+                test=test and not self.disconnect_mode,
+                once=once,
+                raise_errors=True,
+            )
+        except ExecutionError as exc:
+            auth_errors = (SSHHostKeyUnknownError, SSHAuthenticationError)
+            if isinstance(exc.__cause__, auth_errors):
+                raise exc.__cause__ from exc
+            if raise_errors:
+                raise
 
     async def async_turn_on(self) -> None:
         """Turn on by Wake on LAN.
