@@ -56,8 +56,7 @@ class State:
             self.request = None
 
     def handle_ping_error(self) -> None:
-        if self.connected:
-            self._manager.disconnect()
+        self._manager.disconnect()
         if self.online:
             self._manager.reset_commands()
         if self.request == Request.TURN_OFF:
