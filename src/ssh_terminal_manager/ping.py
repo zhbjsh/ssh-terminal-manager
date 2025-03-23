@@ -4,14 +4,14 @@ import asyncio
 from contextlib import suppress
 
 import icmplib
-
-from .errors import OfflineError
+from terminal_manager import OfflineError
 
 
 class Ping:
     use_icmplib: bool | None = None
 
-    def __init__(self, timeout: int) -> None:
+    def __init__(self, host: str, timeout: int) -> None:
+        self._host = host
         self._timeout = timeout
 
     async def _async_test_icmplib(self) -> bool:
@@ -21,22 +21,22 @@ class Ping:
             return False
         return True
 
-    async def _async_ping_icmplib(self, host: str) -> bool:
+    async def _async_ping_icmplib(self) -> bool:
         result = await icmplib.async_ping(
-            host,
+            self._host,
             count=1,
             timeout=self._timeout,
             privileged=False,
         )
         return result.is_alive
 
-    async def _async_ping_process(self, host: str) -> bool:
+    async def _async_ping_process(self) -> bool:
         process = await asyncio.create_subprocess_exec(
             "ping",
             "-q",
             "-c1",
             f"-W{self._timeout}",
-            host,
+            self._host,
             stdin=None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -56,7 +56,7 @@ class Ping:
 
         return process.returncode == 0
 
-    async def async_ping(self, host: str) -> None:
+    async def async_ping(self) -> None:
         """Ping.
 
         Raises:
@@ -67,11 +67,11 @@ class Ping:
             if self.use_icmplib is None:
                 self.use_icmplib = await self._async_test_icmplib()
             if self.use_icmplib:
-                online = await self._async_ping_icmplib(host)
+                online = await self._async_ping_icmplib()
             else:
-                online = await self._async_ping_process(host)
+                online = await self._async_ping_process()
         except Exception as exc:
-            raise OfflineError(host, str(exc)) from exc
+            raise OfflineError(self._host, str(exc)) from exc
 
         if not online:
-            raise OfflineError(host)
+            raise OfflineError(self._host)

@@ -1,13 +1,31 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 import logging
+from pathlib import Path
 import re
 import time
 
 import paramiko
-from terminal_manager import CommandOutput, ExecutionError
+from terminal_manager import (
+    AuthenticationError,
+    CommandOutput,
+    ConnectError,
+    ExecutionError,
+    Terminal,
+)
 
-from .errors import SSHAuthenticationError, SSHConnectError, SSHHostKeyUnknownError
+from .error import HostKeyUnknownError
+from .ping import Ping
+
+DEFAULT_PORT = 22
+DEFAULT_PING_TIMEOUT = 4
+DEFAULT_SSH_TIMEOUT = 4
+DEFAULT_ADD_HOST_KEYS = False
+DEFAULT_LOAD_SYSTEM_HOST_KEYS = False
+DEFAULT_INVOKE_SHELL = False
 
 WIN_TITLE = re.compile(r"\x1b\]0\;.*?\x07")
 WIN_NEWLINE = re.compile(r"\x1b\[\d+\;1H")
@@ -22,18 +40,40 @@ ZSH_PIPE = r"${pipestatus[@]}"
 
 ECHO_STRING = f'echo "{END}|{PS_CODE}|{LINUX_CODE}|{CMD_CODE}|{BASH_PIPE}|{ZSH_PIPE}"'
 EXIT_STRING = "exit"
-
 CMD_START = "\x1b[?25l\x1b[2J\x1b[m\x1b[H"
 CMD_TEST = "Microsoft Windows"
 
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
 
+async def _run_in_executor(prefix: str, func: Callable, *args):
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(thread_name_prefix=prefix) as executor:
+        return await loop.run_in_executor(executor, func, *args)
+
+
+def _detect_cmd(stdout_file: paramiko.ChannelFile) -> bool:
+    if stdout_file.read(16).decode() != CMD_START:
+        return False
+
+    test_line = ""
+    char = stdout_file.read(1).decode()
+
+    while char in ["\r", "\n"]:
+        char = stdout_file.read(1).decode()
+
+    while char not in ["\r", "\n"]:
+        test_line += char
+        char = stdout_file.read(1).decode()
+
+    return CMD_TEST in test_line
+
+
 class CustomRejectPolicy(paramiko.MissingHostKeyPolicy):
     def missing_host_key(
         self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey
     ) -> None:
-        raise SSHHostKeyUnknownError(hostname)
+        raise HostKeyUnknownError(hostname)
 
 
 class ShellParser:
@@ -92,19 +132,21 @@ class ShellParser:
         return stdout, code
 
 
-class SSH:
+class SSHTerminal(Terminal):
     def __init__(
         self,
         host: str,
-        port: int,
-        username: str,
-        password: str,
-        key_filename: str,
-        host_keys_filename: str,
-        add_host_keys: bool,
-        load_system_host_keys: bool,
-        invoke_shell: bool,
-        timeout: int,
+        *,
+        port: int = DEFAULT_PORT,
+        username: str | None = None,
+        password: str | None = None,
+        key_filename: str | None = None,
+        host_keys_filename: str | None = None,
+        add_host_keys: bool = DEFAULT_ADD_HOST_KEYS,
+        load_system_host_keys: bool = DEFAULT_LOAD_SYSTEM_HOST_KEYS,
+        invoke_shell: bool = DEFAULT_INVOKE_SHELL,
+        ssh_timeout: int = DEFAULT_SSH_TIMEOUT,
+        ping_timeout: int = DEFAULT_PING_TIMEOUT,
     ):
         self._host = host
         self._port = port
@@ -113,8 +155,9 @@ class SSH:
         self._key_filename = key_filename
         self._host_keys_filename = host_keys_filename
         self._load_system_host_keys = load_system_host_keys
-        self._timeout = timeout
         self._invoke_shell = invoke_shell
+        self._ssh_timeout = ssh_timeout
+        self._ping = Ping(host, ping_timeout)
         self._client = paramiko.SSHClient()
         self._client.set_log_channel("paramiko")
         self._client.set_missing_host_key_policy(
@@ -125,68 +168,7 @@ class SSH:
     def host(self) -> str:
         return self._host
 
-    def connect(self) -> None:
-        """Connect.
-
-        Raises:
-            `SSHHostKeyUnknownError`
-            `SSHAuthenticationError`
-            `SSHConnectError`
-
-        """
-        try:
-            self._client.connect(
-                self._host,
-                self._port,
-                self._username,
-                self._password,
-                key_filename=self._key_filename,
-                timeout=self._timeout,
-                allow_agent=False,
-            )
-        except SSHHostKeyUnknownError:
-            raise
-        except paramiko.AuthenticationException as exc:
-            if exc.__class__ == paramiko.AuthenticationException:
-                raise SSHAuthenticationError from exc
-            raise SSHAuthenticationError(str(exc)) from exc
-        except OSError as exc:
-            self.disconnect()
-            raise SSHConnectError(exc.strerror) from exc
-        except Exception as exc:
-            self.disconnect()
-            raise SSHConnectError(str(exc)) from exc
-
-    def disconnect(self) -> None:
-        """Disconnect."""
-        self._client.close()
-
-    def load_host_keys(self) -> None:
-        """Load host keys."""
-        if self._load_system_host_keys:
-            self._client.load_system_host_keys()
-        if self._host_keys_filename:
-            with open(self._host_keys_filename, "a", encoding="utf-8"):
-                pass
-            self._client.load_host_keys(self._host_keys_filename)
-
-    def execute_command_string(self, string: str, timeout: int) -> CommandOutput:
-        """Execute a command string.
-
-        Raises:
-            `ExecutionError`
-            `TimeoutError`
-
-        """
-        try:
-            if self._invoke_shell:
-                return self._execute_invoke_shell(string, timeout)
-            return self._execute(string, timeout)
-        except ExecutionError:
-            self.disconnect()
-            raise
-
-    def _execute(self, string: str, timeout: int) -> CommandOutput:
+    def _execute_without_shell(self, string: str, timeout: int) -> CommandOutput:
         try:
             stdin, stdout, stderr = self._client.exec_command(
                 string,
@@ -209,7 +191,7 @@ class SSH:
         except Exception as exc:
             raise ExecutionError(f"Failed to read command output: {exc}") from exc
 
-    def _execute_invoke_shell(self, string: str, timeout: int) -> CommandOutput:
+    def _execute_with_shell(self, string: str, timeout: int) -> CommandOutput:
         try:
             channel = self._client.invoke_shell(width=4095)
         except Exception as exc:
@@ -220,7 +202,7 @@ class SSH:
         stdout_file = channel.makefile("r")
 
         try:
-            cmd = self._detect_cmd(stdout_file)
+            cmd = _detect_cmd(stdout_file)
         except Exception as exc:
             raise ExecutionError(f"Failed to detect shell: {exc}") from exc
 
@@ -256,18 +238,59 @@ class SSH:
             code,
         )
 
-    def _detect_cmd(self, stdout_file: paramiko.ChannelFile) -> bool:
-        if stdout_file.read(16).decode() != CMD_START:
-            return False
+    def _connect(self) -> None:
+        try:
+            self._client.connect(
+                self._host,
+                self._port,
+                self._username,
+                self._password,
+                key_filename=self._key_filename,
+                timeout=self._ssh_timeout,
+                allow_agent=False,
+            )
+        except HostKeyUnknownError:
+            raise
+        except paramiko.AuthenticationException as exc:
+            if exc.__class__ == paramiko.AuthenticationException:
+                raise AuthenticationError from exc
+            raise AuthenticationError(str(exc)) from exc
+        except OSError as exc:
+            self._disconnect()
+            raise ConnectError(exc.strerror) from exc
+        except Exception as exc:
+            self._disconnect()
+            raise ConnectError(str(exc)) from exc
 
-        test_line = ""
-        char = stdout_file.read(1).decode()
+    def _disconnect(self) -> None:
+        self._client.close()
 
-        while char in ["\r", "\n"]:
-            char = stdout_file.read(1).decode()
+    def _execute(self, string: str, timeout: int) -> CommandOutput:
+        if self._invoke_shell:
+            return self._execute_with_shell(string, timeout)
 
-        while char not in ["\r", "\n"]:
-            test_line += char
-            char = stdout_file.read(1).decode()
+        return self._execute_without_shell(string, timeout)
 
-        return CMD_TEST in test_line
+    def _load_host_keys(self) -> None:
+        if self._load_system_host_keys:
+            self._client.load_system_host_keys()
+        if self._host_keys_filename:
+            with Path.open(self._host_keys_filename, "a", encoding="utf-8"):
+                pass
+            self._client.load_host_keys(self._host_keys_filename)
+
+    async def async_ping(self) -> None:
+        await self._ping.async_ping()
+
+    async def async_connect(self) -> None:
+        await _run_in_executor("SSHConnect", self._connect)
+
+    async def async_disconnect(self) -> None:
+        await _run_in_executor("SSHDisconnect", self._disconnect)
+
+    async def async_execute(self, string: str, timeout: int) -> CommandOutput:
+        return await _run_in_executor("SSHExecute", self._execute, string, timeout)
+
+    async def async_load_host_keys(self) -> None:
+        """Load host keys."""
+        return await _run_in_executor("SSHLoadHostKeys", self._load_host_keys)
