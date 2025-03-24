@@ -31,6 +31,7 @@ from terminal_manager import (
     State,
     TextSensor,
     VersionSensor,
+    default_collections,
 )
 
 from .error import HostKeyUnknownError
@@ -85,4 +86,5 @@ __all__ = [
     "DEFAULT_PORT",
     "DEFAULT_SSH_TIMEOUT",
     "SSHTerminal",
+    "default_collections",
 ]
