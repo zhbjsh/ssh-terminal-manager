@@ -35,10 +35,8 @@ END = "__exit_code__"
 PS_CODE = "$LastExitCode"
 LINUX_CODE = "$?"
 CMD_CODE = r"%errorlevel%"
-BASH_PIPE = r"${PIPESTATUS[@]}"
-ZSH_PIPE = r"${pipestatus[@]}"
 
-ECHO_STRING = f'echo "{END}|{PS_CODE}|{LINUX_CODE}|{CMD_CODE}|{BASH_PIPE}|{ZSH_PIPE}"'
+ECHO_STRING = f'echo "{END}|{PS_CODE}|{LINUX_CODE}|{CMD_CODE}"'
 EXIT_STRING = "exit"
 CMD_START = "\x1b[?25l\x1b[2J\x1b[m\x1b[H"
 CMD_TEST = "Microsoft Windows"
@@ -81,21 +79,14 @@ class ShellParser:
         self._stdin = stdin
 
     def _get_code(self, line: str) -> tuple[int, int]:
-        if len(fields := line.split("|")) != 6:
+        if len(fields := line.split("|")) != 4:
             return 0
 
-        for item in fields[:4]:
+        for item in fields:
             if item.isnumeric() and (code := int(item)) != 0:
                 return code
             if item == "False":
                 return 1
-
-        if len(self._stdin) > 1:
-            return 0
-
-        for item in fields[4].split() + fields[5].split():
-            if item.isnumeric() and (code := int(item)) != 0:
-                return int(item)
 
         return 0
 
